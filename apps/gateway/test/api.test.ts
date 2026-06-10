@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { RunManager } from '../src/run-manager.js';
 import { createApp } from '../src/server.js';
 
-function makeApp() {
+function makeApp(deps?: Parameters<typeof createApp>[1]) {
   const manager = new RunManager();
-  return { app: createApp(manager), manager };
+  return { app: createApp(manager, deps), manager };
 }
 
 async function waitForDone(app: ReturnType<typeof createApp>, runId: string, timeoutMs = 5000) {
@@ -134,6 +134,62 @@ describe('gateway API', () => {
         })
       ).status,
     ).toBe(400);
+  });
+
+  it('generates and stores custom components via the injected pipeline', async () => {
+    const manifest = {
+      ref: 'custom/stat-ring',
+      name: 'Stat Ring',
+      description: 'ring',
+      patterns: ['chart'],
+      props: [{ name: 'value', type: 'number' }],
+    };
+    const { app } = makeApp({
+      generate: async (prompt: string) => ({
+        component: { manifest, tsx: `// for: ${prompt}\nexport function StatRing() {}` },
+        attempts: 1,
+      }),
+    });
+
+    const res = await app.request('/api/components/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'a stat ring' }),
+    });
+    expect(res.status).toBe(201);
+    const record = (await res.json()) as { manifest: { ref: string }; attempts: number };
+    expect(record.manifest.ref).toBe('custom/stat-ring');
+
+    const list = (await (await app.request('/api/components')).json()) as Array<{ manifest: { ref: string } }>;
+    expect(list.map((r) => r.manifest.ref)).toEqual(['custom/stat-ring']);
+
+    expect((await app.request('/api/components/generate', { method: 'POST', body: '{}' })).status).toBe(400);
+  });
+
+  it('reports 422 when generation fails and 503 when LLM is unconfigured', async () => {
+    const failing = makeApp({
+      generate: async () => {
+        throw new Error('component generation failed after 3 attempts');
+      },
+    });
+    const res = await failing.app.request('/api/components/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'x' }),
+    });
+    expect(res.status).toBe(422);
+
+    const unconfigured = makeApp({
+      generate: async () => {
+        throw Object.assign(new Error('LLM not configured'), { status: 503 });
+      },
+    });
+    const res503 = await unconfigured.app.request('/api/components/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'x' }),
+    });
+    expect(res503.status).toBe(503);
   });
 
   it('serves the live viewer page', async () => {

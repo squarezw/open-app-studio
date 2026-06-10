@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import type { AppSpec } from '@oas/app-spec';
 import type { InteractionFlowGraph } from '@oas/flow-graph';
 import { e2eFlows } from './e2e.js';
+import { componentName as componentNameOf } from './props.js';
 import { appDataFile, appJson, indexFile, layoutFile, packageJson, tsconfigJson } from './project-files.js';
 import { screenFile } from './screens.js';
 
@@ -15,6 +16,8 @@ export interface GeneratedFile {
 export interface GenerateOptions {
   /** Source graph — enables e2e flow generation. */
   ifg?: InteractionFlowGraph;
+  /** AI-generated components referenced by the spec (ref → implementation). */
+  customComponents?: Array<{ ref: string; tsx: string }>;
 }
 
 /**
@@ -23,6 +26,9 @@ export interface GenerateOptions {
  * React Native code — no player shell, no runtime dependency on OAS.
  */
 export function generateProject(spec: AppSpec, opts: GenerateOptions = {}): GeneratedFile[] {
+  const customRefs = new Set((opts.customComponents ?? []).map((c) => c.ref));
+  const usedRefs = new Set(spec.screens.flatMap((s) => s.components.map((c) => c.ref)));
+
   const files: GeneratedFile[] = [
     { path: 'package.json', content: packageJson(spec) },
     { path: 'app.json', content: appJson(spec) },
@@ -30,12 +36,17 @@ export function generateProject(spec: AppSpec, opts: GenerateOptions = {}): Gene
     { path: '.gitignore', content: 'node_modules/\n.expo/\ndist/\n*.log\n' },
     { path: 'app/_layout.tsx', content: layoutFile(spec) },
     { path: 'app/index.tsx', content: indexFile(spec) },
-    ...spec.screens.map((s) => ({ path: `app/${s.id}.tsx`, content: screenFile(s) })),
+    ...spec.screens.map((s) => ({ path: `app/${s.id}.tsx`, content: screenFile(s, customRefs) })),
     { path: 'components/oas.tsx', content: template('oas-components.tsx') },
     { path: 'theme/tokens.ts', content: template('theme-tokens.ts') },
     { path: 'state/app-data.ts', content: appDataFile(spec) },
     { path: 'README.md', content: readme(spec) },
   ];
+
+  for (const custom of opts.customComponents ?? []) {
+    if (!usedRefs.has(custom.ref)) continue;
+    files.push({ path: `components/custom/${componentNameOf(custom.ref)}.tsx`, content: fixCustomImports(custom.tsx) });
+  }
 
   if (opts.ifg) {
     for (const [name, yaml] of e2eFlows(spec, opts.ifg)) {
@@ -44,6 +55,11 @@ export function generateProject(spec: AppSpec, opts: GenerateOptions = {}): Gene
   }
 
   return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** Custom components are authored against '../theme/tokens'; from components/custom/ it's two levels up. */
+function fixCustomImports(tsx: string): string {
+  return tsx.replace(/from '\.\.\/theme\/tokens'/g, `from '../../theme/tokens'`);
 }
 
 export async function writeProject(files: GeneratedFile[], outDir: string): Promise<void> {

@@ -31,11 +31,12 @@ The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive 
 
 ## M3 — AI component generation & polish
 
-- [ ] Component Generator agent + sandbox (typecheck/lint/render) loop
+- [x] Component Generator agent + sandbox repair loop — `@oas/llm` (provider-agnostic OpenAI-compatible client, DeepSeek default) + `@oas/component-gen` (TSX parse, import allowlist, banned constructs, export/manifest checks; errors fed back, max 3 attempts); gateway `POST /api/components/generate`; Studio ✨ AI panel + "Custom (AI)" palette; codegen writes custom components into generated projects. Full semantic typecheck/headless render in sandbox: still open (today it's verified at project level).
 - [ ] Screenshot-region → component generation (visual matching without asset copying)
 - [ ] Theme token extraction from IFG screenshots
+- [ ] LLM Annotator (replace keyword roles with semantic judgment); AI sidebar patch-review for spec edits
 - [ ] IFG coverage report UI; resume/extend a previous clone run
-- **Demo**: "make this card look like that one" — point at an IFG node region, get a generated component.
+- **Demo**: "make this card look like that one" — point at an IFG node region, get a generated component. *Today:* type a description in the editor's ✨ AI panel → sandboxed component lands in the palette → generated app typechecks with it.
 
 ## M4 — Ship
 

@@ -9,13 +9,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "dev": "node dist/index.js",
-    "start": "node dist/index.js"
+    "dev": "node --env-file-if-exists=../../.env dist/index.js",
+    "start": "node --env-file-if-exists=../../.env dist/index.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@oas/app-spec": "workspace:*",
     "@oas/clone-agents": "workspace:*",
+    "@oas/component-gen": "workspace:*",
+    "@oas/component-registry": "workspace:*",
+    "@oas/llm": "workspace:*",
     "@oas/device-bridge": "workspace:*",
     "@oas/flow-graph": "workspace:*",
     "hono": "^4.6.0",

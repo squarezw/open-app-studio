@@ -110,6 +110,34 @@ describe('generateProject', () => {
     expect(yaml).not.toContain('WARNING');
   });
 
+  it('writes referenced custom components and imports them in screens', () => {
+    const customSpec = {
+      ...spec,
+      screens: spec.screens.map((s) =>
+        s.id === 'fakeshop_home'
+          ? { ...s, components: [...s.components, { ref: 'custom/stat-ring', props: { value: 80 } }] }
+          : s,
+      ),
+    };
+    const customTsx = `import { colors } from '../theme/tokens';\nexport function StatRing({ value }: { value: number }) { return null; }\n`;
+    const out = generateProject(customSpec, {
+      customComponents: [
+        { ref: 'custom/stat-ring', tsx: customTsx },
+        { ref: 'custom/unused', tsx: 'export function Unused() { return null; }' },
+      ],
+    });
+    const paths = out.map((f) => f.path);
+    expect(paths).toContain('components/custom/StatRing.tsx');
+    expect(paths).not.toContain('components/custom/Unused.tsx');
+
+    const home = out.find((f) => f.path === 'app/fakeshop_home.tsx')!.content;
+    expect(home).toContain(`import { StatRing } from '../components/custom/StatRing';`);
+    expect(home).toContain('<StatRing value={80} />');
+
+    const written = out.find((f) => f.path === 'components/custom/StatRing.tsx')!.content;
+    expect(written).toContain(`from '../../theme/tokens'`);
+  });
+
   it('is deterministic', () => {
     const again = generateProject(compileBlueprint(SHOP_IFG, { runId: 'r1' }), { ifg: SHOP_IFG });
     expect(again).toEqual(files);

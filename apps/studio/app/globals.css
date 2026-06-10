@@ -227,3 +227,23 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .pv-skeleton { height: 12px; border-radius: 5px; background: var(--border); opacity: .6; display: block; }
 .pv-generic { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; }
 .pv-generic-name { font-size: 13px; font-weight: 600; font-family: ui-monospace, monospace; }
+
+/* ── AI panel ─────────────────────────────────────────────── */
+
+.palette-custom { border-color: #5a4a7e; }
+.ai-panel { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.ai-panel textarea {
+  width: 100%; resize: vertical; font: inherit; font-size: 13px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 10px;
+}
+.ai-error { color: #ff5370; font-size: 12px; white-space: pre-wrap; }
+.ai-result { border: 1px solid #5a4a7e; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.ai-result-head { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.ai-actions { display: flex; gap: 6px; }
+.ai-actions button { font-size: 12px; padding: 5px 10px; }
+.ai-code {
+  margin: 0; max-height: 260px; overflow: auto; font-size: 11px; line-height: 1.5;
+  background: var(--bg); border-radius: 6px; padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap;
+}
