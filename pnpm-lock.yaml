@@ -133,6 +133,28 @@ importers:
         specifier: ^3.0.0
         version: 3.2.6(@types/node@22.19.20)
 
+  packages/codegen:
+    dependencies:
+      '@oas/app-spec':
+        specifier: workspace:*
+        version: link:../app-spec
+      '@oas/component-registry':
+        specifier: workspace:*
+        version: link:../component-registry
+      '@oas/flow-graph':
+        specifier: workspace:*
+        version: link:../flow-graph
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.20
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.6(@types/node@22.19.20)
+
   packages/component-registry:
     dependencies:
       '@oas/flow-graph':

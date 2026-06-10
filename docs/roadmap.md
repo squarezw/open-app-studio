@@ -26,8 +26,8 @@ The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive 
 - [x] `app-spec` DSL + schema; Blueprint Compiler (IFG subgraph → spec draft): role → default blocks, patterns → registry lookup, edges → nav buttons, launch fan-out → tabs, observed form fields → data models; `POST /api/runs/:id/blueprint`
 - [x] `component-registry`: 31 built-in block manifests with pattern tags + lookups (RN implementations land with codegen)
 - [ ] Studio canvas: render spec, drag/drop blocks, props inspector, AI sidebar with patch-review
-- [ ] `codegen`: spec → runnable Expo project; IFG flows → E2E tests
-- **Demo**: clone an app → promote its main flow to a blueprint → edit on canvas → run the generated Expo app on the emulator → its E2E flow passes.
+- [x] `codegen`: spec → runnable Expo project (expo-router, 31 block implementations, demo data seeds, dark theme tokens); IFG flows re-targeted as Maestro E2E tests against the generated UI; `oas-codegen` CLI. Verified: generated FakeShop clone passes `tsc --noEmit` strict against real Expo SDK 52.
+- **Demo**: clone an app → promote its main flow to a blueprint → edit on canvas → run the generated Expo app on the emulator → its E2E flow passes. *Today:* `oas-spike --app x --driver fake --out /tmp/run && oas-codegen --ifg /tmp/run/ifg.json --out /tmp/app && cd /tmp/app && npm i && npx expo start`.
 
 ## M3 — AI component generation & polish
 
