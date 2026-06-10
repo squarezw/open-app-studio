@@ -1,7 +1,7 @@
 # @oas/component-registry
 
-Built-in block library (~30 components with pattern tags) plus the AI **Component Generator** pipeline: generate → sandbox (typecheck / lint / render test) → preview → accept into project registry.
+The built-in block library: **31 component manifests** with IFG pattern tags, prop contracts, and slot declarations, plus registry lookups (`byRef`, `byPattern(kind, role?)`, `forRole`).
+
+Manifests are what the Blueprint Compiler and the canvas need; the React Native implementations land alongside codegen (M2 second half). The AI Component Generator pipeline (generate → sandbox → preview → accept) is M3.
 
 Design: [docs/component-system.md](../../docs/component-system.md)
-
-Status: not yet scaffolded — see [Roadmap M2–M3](../../docs/roadmap.md).
