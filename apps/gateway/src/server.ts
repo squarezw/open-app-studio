@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import {
   fetchStoreMetadata,
   parseStoreUrl,
@@ -22,6 +23,9 @@ interface CreateRunBody {
 
 export function createApp(manager: RunManager): Hono {
   const app = new Hono();
+
+  // Studio (localhost:3000) talks to the gateway cross-origin during development.
+  app.use('/api/*', cors());
 
   app.get('/', (c) => c.html(VIEWER_HTML));
 
