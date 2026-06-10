@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { ActionEdge, Flow, ScreenNode } from '@oas/flow-graph';
 import { GATEWAY_URL, gatewayWsUrl, type RunSummary } from '../lib/gateway';
 import type { PartialIfg } from '../lib/ifg-to-flow';
@@ -14,7 +15,9 @@ interface GraphEventData {
 }
 
 export default function RunView({ id }: { id: string }) {
+  const router = useRouter();
   const [run, setRun] = useState<RunSummary>();
+  const [promoting, setPromoting] = useState(false);
   const [graph, setGraph] = useState<PartialIfg>({ nodes: [], edges: [] });
   const [selectedFlow, setSelectedFlow] = useState<string>();
   const [error, setError] = useState<string>();
@@ -79,6 +82,19 @@ export default function RunView({ id }: { id: string }) {
     return flow ? new Set(flow.edgeIds) : undefined;
   }, [graph.flows, selectedFlow]);
 
+  async function promote() {
+    setPromoting(true);
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/blueprint`, { method: 'POST', body: '{}' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { id: blueprintId } = (await res.json()) as { id: string };
+      router.push(`/blueprints/${blueprintId}`);
+    } catch (err) {
+      setError(`promote failed: ${err instanceof Error ? err.message : err}`);
+      setPromoting(false);
+    }
+  }
+
   if (error) return <div className="error-box">{error}</div>;
 
   return (
@@ -108,6 +124,11 @@ export default function RunView({ id }: { id: string }) {
             <span>frontier</span>
             <b>{graph.frontier!.length}</b>
           </div>
+        )}
+        {run?.status === 'done' && graph.nodes.length > 0 && (
+          <button className="primary promote" onClick={promote} disabled={promoting}>
+            {promoting ? 'Promoting…' : '🧱 Promote to Blueprint'}
+          </button>
         )}
 
         <h2>User flows</h2>

@@ -51,6 +51,12 @@ importers:
 
   apps/studio:
     dependencies:
+      '@oas/app-spec':
+        specifier: workspace:*
+        version: link:../../packages/app-spec
+      '@oas/component-registry':
+        specifier: workspace:*
+        version: link:../../packages/component-registry
       '@oas/flow-graph':
         specifier: workspace:*
         version: link:../../packages/flow-graph

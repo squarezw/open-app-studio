@@ -93,19 +93,47 @@ describe('gateway API', () => {
 
     const res = await app.request(`/api/runs/${runId}/blueprint`, { method: 'POST', body: '{}' });
     expect(res.status).toBe(201);
-    const spec = (await res.json()) as {
-      version: string;
-      screens: Array<{ role?: string; components: Array<{ ref: string }> }>;
-      meta: { generatedFrom: string; sourceRunId: string };
+    const blueprint = (await res.json()) as {
+      id: string;
+      spec: {
+        version: string;
+        screens: Array<{ role?: string; components: Array<{ ref: string }> }>;
+        meta: { generatedFrom: string; sourceRunId: string };
+        app: { name: string };
+      };
     };
-    expect(spec.version).toBe('0.1');
-    expect(spec.screens).toHaveLength(6);
-    const cart = spec.screens.find((s) => s.role === 'cart')!;
+    expect(blueprint.spec.version).toBe('0.1');
+    expect(blueprint.spec.screens).toHaveLength(6);
+    const cart = blueprint.spec.screens.find((s) => s.role === 'cart')!;
     expect(cart.components.map((c) => c.ref)).toContain('oas/cart-item-list');
-    expect(spec.meta).toMatchObject({ generatedFrom: 'ifg', sourceRunId: runId });
+    expect(blueprint.spec.meta).toMatchObject({ generatedFrom: 'ifg', sourceRunId: runId });
 
-    // blueprint for a running/unknown run is rejected cleanly
+    // blueprint CRUD: stored, listable, editable
+    expect(((await (await app.request('/api/blueprints')).json()) as unknown[]).length).toBe(1);
+    const edited = { ...blueprint.spec, app: { ...blueprint.spec.app, name: 'Edited Name' } };
+    const put = await app.request(`/api/blueprints/${blueprint.id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ spec: edited }),
+    });
+    expect(put.status).toBe(200);
+    const fetched = (await (await app.request(`/api/blueprints/${blueprint.id}`)).json()) as {
+      spec: { app: { name: string } };
+    };
+    expect(fetched.spec.app.name).toBe('Edited Name');
+
+    // rejected inputs
     expect((await app.request('/api/runs/nope/blueprint', { method: 'POST', body: '{}' })).status).toBe(404);
+    expect((await app.request('/api/blueprints/nope')).status).toBe(404);
+    expect(
+      (
+        await app.request(`/api/blueprints/${blueprint.id}`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ spec: { bogus: true } }),
+        })
+      ).status,
+    ).toBe(400);
   });
 
   it('serves the live viewer page', async () => {

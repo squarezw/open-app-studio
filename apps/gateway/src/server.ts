@@ -8,6 +8,8 @@ import {
 } from '@oas/clone-agents';
 import { AdbDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
 import { replayScript } from '@oas/flow-graph';
+import type { AppSpec } from '@oas/app-spec';
+import { BlueprintManager } from './blueprint-manager.js';
 import type { RunManager } from './run-manager.js';
 import { VIEWER_HTML } from './viewer.js';
 
@@ -22,7 +24,7 @@ interface CreateRunBody {
   stallThreshold?: number;
 }
 
-export function createApp(manager: RunManager): Hono {
+export function createApp(manager: RunManager, blueprints: BlueprintManager = new BlueprintManager()): Hono {
   const app = new Hono();
 
   // Studio talks to the gateway cross-origin during development. The gateway
@@ -132,10 +134,44 @@ export function createApp(manager: RunManager): Hono {
         appName: body.appName,
         runId: record.id,
       });
-      return c.json(spec, 201);
+      const blueprint = blueprints.create(spec, record.id);
+      return c.json(blueprint, 201);
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 422);
     }
+  });
+
+  app.get('/api/blueprints', (c) =>
+    c.json(
+      blueprints.list().map((b) => ({
+        id: b.id,
+        appName: b.spec.app.name,
+        screens: b.spec.screens.length,
+        runId: b.runId,
+        updatedAt: b.updatedAt,
+      })),
+    ),
+  );
+
+  app.get('/api/blueprints/:id', (c) => {
+    const record = blueprints.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'blueprint not found' }, 404);
+    return c.json(record);
+  });
+
+  app.put('/api/blueprints/:id', async (c) => {
+    let body: { spec?: AppSpec };
+    try {
+      body = await c.req.json<{ spec?: AppSpec }>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (body.spec?.version !== '0.1' || !Array.isArray(body.spec.screens)) {
+      return c.json({ error: 'body.spec must be an App Spec (version 0.1)' }, 400);
+    }
+    const record = blueprints.update(c.req.param('id'), body.spec);
+    if (!record) return c.json({ error: 'blueprint not found' }, 404);
+    return c.json(record);
   });
 
   app.get('/api/runs/:id/flows/:flowId/replay', (c) => {

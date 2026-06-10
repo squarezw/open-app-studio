@@ -15,6 +15,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <h1>
             <Link href="/">🧱 Open App Studio</Link>
           </h1>
+          <nav className="topnav">
+            <Link href="/">Runs</Link>
+            <Link href="/blueprints">Blueprints</Link>
+          </nav>
           <span className="crumb">clone · explore · build</span>
         </header>
         {children}
