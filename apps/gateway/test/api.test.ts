@@ -81,6 +81,33 @@ describe('gateway API', () => {
     expect((await app.request('/api/runs/nope/ifg')).status).toBe(404);
   });
 
+  it('compiles a blueprint from a finished run', async () => {
+    const { app } = makeApp();
+    const create = await app.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'com.fakeshop', driver: 'fake', maxActions: 60 }),
+    });
+    const { runId } = (await create.json()) as { runId: string };
+    await waitForDone(app, runId);
+
+    const res = await app.request(`/api/runs/${runId}/blueprint`, { method: 'POST', body: '{}' });
+    expect(res.status).toBe(201);
+    const spec = (await res.json()) as {
+      version: string;
+      screens: Array<{ role?: string; components: Array<{ ref: string }> }>;
+      meta: { generatedFrom: string; sourceRunId: string };
+    };
+    expect(spec.version).toBe('0.1');
+    expect(spec.screens).toHaveLength(6);
+    const cart = spec.screens.find((s) => s.role === 'cart')!;
+    expect(cart.components.map((c) => c.ref)).toContain('oas/cart-item-list');
+    expect(spec.meta).toMatchObject({ generatedFrom: 'ifg', sourceRunId: runId });
+
+    // blueprint for a running/unknown run is rejected cleanly
+    expect((await app.request('/api/runs/nope/blueprint', { method: 'POST', body: '{}' })).status).toBe(404);
+  });
+
   it('serves the live viewer page', async () => {
     const { app } = makeApp();
     const res = await app.request('/');

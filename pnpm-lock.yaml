@@ -17,6 +17,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.25)
+      '@oas/app-spec':
+        specifier: workspace:*
+        version: link:../../packages/app-spec
       '@oas/clone-agents':
         specifier: workspace:*
         version: link:../../packages/clone-agents
@@ -80,6 +83,31 @@ importers:
         specifier: ^3.0.0
         version: 3.2.6(@types/node@22.19.20)
 
+  packages/app-spec:
+    dependencies:
+      '@oas/component-registry':
+        specifier: workspace:*
+        version: link:../component-registry
+      '@oas/flow-graph':
+        specifier: workspace:*
+        version: link:../flow-graph
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.20
+      ajv:
+        specifier: ^8.17.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: ^3.0.0
+        version: 3.0.1(ajv@8.20.0)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.6(@types/node@22.19.20)
+
   packages/clone-agents:
     dependencies:
       '@oas/device-bridge':
@@ -98,6 +126,22 @@ importers:
       ajv-formats:
         specifier: ^3.0.0
         version: 3.0.1(ajv@8.20.0)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.6(@types/node@22.19.20)
+
+  packages/component-registry:
+    dependencies:
+      '@oas/flow-graph':
+        specifier: workspace:*
+        version: link:../flow-graph
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.20
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

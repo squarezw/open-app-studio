@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { compileBlueprint } from '@oas/app-spec';
 import {
   fetchStoreMetadata,
   parseStoreUrl,
@@ -24,8 +25,14 @@ interface CreateRunBody {
 export function createApp(manager: RunManager): Hono {
   const app = new Hono();
 
-  // Studio (localhost:3000) talks to the gateway cross-origin during development.
-  app.use('/api/*', cors());
+  // Studio talks to the gateway cross-origin during development. The gateway
+  // can spawn device runs on this machine, so origins are an explicit
+  // allowlist — never a wildcard. Override via STUDIO_ORIGIN.
+  const allowedOrigins = process.env.STUDIO_ORIGIN?.split(',') ?? [
+    'http://localhost:3000',
+    'http://localhost:3100',
+  ];
+  app.use('/api/*', cors({ origin: allowedOrigins }));
 
   app.get('/', (c) => c.html(VIEWER_HTML));
 
@@ -110,6 +117,25 @@ export function createApp(manager: RunManager): Hono {
     if (!record) return c.json({ error: 'run not found' }, 404);
     if (!record.ifg) return c.json({ error: `run is ${record.status}, no graph yet` }, 409);
     return c.json(record.ifg);
+  });
+
+  app.post('/api/runs/:id/blueprint', async (c) => {
+    const record = manager.get(c.req.param('id'));
+    if (!record) return c.json({ error: 'run not found' }, 404);
+    if (!record.ifg) return c.json({ error: `run is ${record.status}, no graph yet` }, 409);
+    const body: { nodeIds?: string[]; appName?: string } = await c.req
+      .json<{ nodeIds?: string[]; appName?: string }>()
+      .catch(() => ({}));
+    try {
+      const spec = compileBlueprint(record.ifg, {
+        nodeIds: body.nodeIds,
+        appName: body.appName,
+        runId: record.id,
+      });
+      return c.json(spec, 201);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 422);
+    }
   });
 
   app.get('/api/runs/:id/flows/:flowId/replay', (c) => {
