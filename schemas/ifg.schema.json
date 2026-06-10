@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openappstudio.dev/schemas/ifg.schema.json",
+  "title": "Interaction Flow Graph",
+  "description": "A directed graph of observed mobile app behavior: screen states (nodes) connected by user actions (edges). Produced by the OAS Clone Engine.",
+  "type": "object",
+  "required": ["version", "meta", "nodes", "edges"],
+  "properties": {
+    "version": { "const": "0.1" },
+    "meta": {
+      "type": "object",
+      "required": ["appName", "platform"],
+      "properties": {
+        "appName": { "type": "string" },
+        "appId": { "type": "string", "description": "bundle id / package name" },
+        "storeUrl": { "type": "string", "format": "uri" },
+        "platform": { "enum": ["android-emulator", "android-device", "ios-simulator", "ios-device", "inferred"] },
+        "appVersion": { "type": "string" },
+        "runId": { "type": "string" },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "nodes": { "type": "integer" },
+            "edges": { "type": "integer" },
+            "frontier": { "type": "integer" },
+            "blocked": { "type": "integer" },
+            "actions": { "type": "integer", "description": "total actions executed during exploration" }
+          }
+        }
+      }
+    },
+    "nodes": { "type": "array", "items": { "$ref": "#/$defs/screenNode" } },
+    "edges": { "type": "array", "items": { "$ref": "#/$defs/actionEdge" } },
+    "flows": { "type": "array", "items": { "$ref": "#/$defs/flow" } },
+    "frontier": { "type": "array", "items": { "$ref": "#/$defs/frontierItem" } }
+  },
+  "$defs": {
+    "screenNode": {
+      "type": "object",
+      "required": ["id", "fingerprint"],
+      "properties": {
+        "id": { "type": "string" },
+        "fingerprint": { "type": "string", "description": "structural layout hash; the node dedup key" },
+        "routeHint": { "type": "string", "description": "Android activity name or iOS accessibility identifier" },
+        "role": {
+          "enum": ["launch", "onboarding", "auth", "feed", "list", "detail", "form", "cart", "checkout", "settings", "profile", "search", "modal", "webview", "other"]
+        },
+        "title": { "type": "string", "description": "human-readable label assigned by the Annotator" },
+        "patterns": { "type": "array", "items": { "$ref": "#/$defs/componentPattern" } },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "visits": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "componentPattern": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["tabbar", "navbar", "drawer", "list", "grid", "card", "carousel", "form", "button", "input", "picker", "map", "video", "chart", "dialog", "toast", "empty", "other"]
+        },
+        "region": { "$ref": "#/$defs/rect" },
+        "fields": {
+          "type": "array",
+          "description": "for form patterns: observed input fields",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "keyboard": { "enum": ["text", "email", "number", "phone", "password", "url"] },
+              "required": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "actionEdge": {
+      "type": "object",
+      "required": ["id", "from", "to", "action"],
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "action": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["tap", "longPress", "swipe", "type", "scroll", "back", "deepLink", "launch", "system"] },
+            "selector": { "$ref": "#/$defs/selector" },
+            "point": { "$ref": "#/$defs/point" },
+            "direction": { "enum": ["up", "down", "left", "right"] },
+            "inputValue": { "type": "string", "description": "synthesized input; never real user credentials" },
+            "deepLinkUrl": { "type": "string" }
+          }
+        },
+        "guard": { "enum": ["none", "loginRequired", "paymentBoundary", "destructive"], "default": "none" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "latencyMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "required": ["id", "name", "edgeIds"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "edgeIds": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "coverage": { "enum": ["observed", "inferred"] }
+      }
+    },
+    "frontierItem": {
+      "type": "object",
+      "required": ["nodeId", "reason"],
+      "properties": {
+        "nodeId": { "type": "string" },
+        "selector": { "$ref": "#/$defs/selector" },
+        "reason": { "enum": ["unexplored", "blocked-login", "blocked-payment", "blocked-permission", "budget"] }
+      }
+    },
+    "selector": {
+      "type": "object",
+      "description": "UI-tree selector; at least one strategy must be present",
+      "minProperties": 1,
+      "properties": {
+        "accessibilityId": { "type": "string" },
+        "resourceId": { "type": "string" },
+        "text": { "type": "string" },
+        "xpath": { "type": "string" },
+        "index": { "type": "integer" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["type", "ref"],
+      "properties": {
+        "type": { "enum": ["screenshot", "uiTree", "traceEvent"] },
+        "ref": { "type": "string", "description": "object-storage URI" },
+        "capturedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "rect": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "properties": {
+        "x": { "type": "number" }, "y": { "type": "number" },
+        "w": { "type": "number" }, "h": { "type": "number" }
+      }
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    }
+  }
+}

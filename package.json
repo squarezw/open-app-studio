@@ -1,0 +1,17 @@
+{
+  "name": "open-app-studio",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Build, clone, and ship mobile apps like Lego — powered by AI agents.",
+  "license": "GPL-3.0",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  }
+}
