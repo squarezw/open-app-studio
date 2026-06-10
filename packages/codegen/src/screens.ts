@@ -2,8 +2,13 @@ import type { ScreenSpec } from '@oas/app-spec';
 import { componentName, propsToJsx, usesBinding, usesRouter, usesSubmit } from './props.js';
 
 /** Emits one expo-router screen file (app/<id>.tsx) from a ScreenSpec. */
-export function screenFile(screen: ScreenSpec): string {
-  const refs = [...new Set(screen.components.map((c) => componentName(c.ref)))].sort();
+export function screenFile(screen: ScreenSpec, customRefs: Set<string> = new Set()): string {
+  const builtinNames = [
+    ...new Set(screen.components.filter((c) => !customRefs.has(c.ref)).map((c) => componentName(c.ref))),
+  ].sort();
+  const customNames = [
+    ...new Set(screen.components.filter((c) => customRefs.has(c.ref)).map((c) => componentName(c.ref))),
+  ].sort();
   const needsResolve = screen.components.some((c) => usesBinding(c.props));
   const needsRouter = screen.components.some((c) => usesRouter(c.props));
   const needsSubmit = screen.components.some((c) => usesSubmit(c.props));
@@ -12,7 +17,8 @@ export function screenFile(screen: ScreenSpec): string {
   const imports = [
     needsRouter ? `import { router } from 'expo-router';` : undefined,
     `import { ${rnImports.join(', ')} } from 'react-native';`,
-    `import { ${refs.join(', ')} } from '../components/oas';`,
+    builtinNames.length > 0 ? `import { ${builtinNames.join(', ')} } from '../components/oas';` : undefined,
+    ...customNames.map((name) => `import { ${name} } from '../components/custom/${name}';`),
     needsResolve ? `import { resolve } from '../state/app-data';` : undefined,
     `import { colors } from '../theme/tokens';`,
   ].filter(Boolean);

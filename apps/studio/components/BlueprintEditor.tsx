@@ -17,6 +17,7 @@ import {
   updateProp,
   type EditorHistory,
 } from '../lib/blueprint';
+import AiPanel, { type CustomComponent } from './AiPanel';
 import BlockPreview from './BlockPreview';
 import PropsInspector from './PropsInspector';
 
@@ -28,6 +29,19 @@ export default function BlueprintEditor({ id }: { id: string }) {
   const [selected, setSelected] = useState<number>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [error, setError] = useState<string>();
+  const [customComponents, setCustomComponents] = useState<CustomComponent[]>([]);
+
+  const refreshCustom = useCallback(async () => {
+    try {
+      setCustomComponents(await (await fetch(`${GATEWAY_URL}/api/components`)).json());
+    } catch {
+      /* gateway offline — custom palette stays empty */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshCustom();
+  }, [refreshCustom]);
 
   useEffect(() => {
     (async () => {
@@ -93,6 +107,24 @@ export default function BlueprintEditor({ id }: { id: string }) {
             ＋ {m.name}
           </button>
         ))}
+        {customComponents.length > 0 && (
+          <>
+            <h2 style={{ marginTop: 14 }}>Custom (AI)</h2>
+            {customComponents.map((c) => (
+              <button
+                key={c.manifest.ref}
+                className="palette-item palette-custom"
+                title={c.manifest.description}
+                onClick={() => {
+                  edit(addComponent(spec, screenId, { ref: c.manifest.ref, props: defaultPropsFor(c.manifest) }));
+                  setSelected(screen ? screen.components.length : 0);
+                }}
+              >
+                ✨ {c.manifest.name}
+              </button>
+            ))}
+          </>
+        )}
       </aside>
 
       <section className="canvas-center">
@@ -179,8 +211,15 @@ export default function BlueprintEditor({ id }: { id: string }) {
           <p className="pv-label">Select a block in the preview to edit its props.</p>
         )}
         {screen && selected !== undefined && screen.components[selected] && !byRef(screen.components[selected]!.ref) && (
-          <p className="pv-label">Unknown ref — props edited as free-form.</p>
+          <p className="pv-label">Custom component — props edited as free-form.</p>
         )}
+        <AiPanel
+          onGenerated={refreshCustom}
+          onInsert={(c) => {
+            edit(addComponent(spec, screenId, { ref: c.manifest.ref, props: defaultPropsFor(c.manifest) }));
+            setSelected(screen ? screen.components.length : 0);
+          }}
+        />
       </aside>
     </div>
   );

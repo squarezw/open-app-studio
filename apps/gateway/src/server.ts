@@ -9,7 +9,10 @@ import {
 import { AdbDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
 import { replayScript } from '@oas/flow-graph';
 import type { AppSpec } from '@oas/app-spec';
+import { generateComponent, type GenerateResult } from '@oas/component-gen';
+import { LlmClient } from '@oas/llm';
 import { BlueprintManager } from './blueprint-manager.js';
+import { CustomComponentStore } from './custom-components.js';
 import type { RunManager } from './run-manager.js';
 import { VIEWER_HTML } from './viewer.js';
 
@@ -24,7 +27,25 @@ interface CreateRunBody {
   stallThreshold?: number;
 }
 
-export function createApp(manager: RunManager, blueprints: BlueprintManager = new BlueprintManager()): Hono {
+export interface AppDeps {
+  blueprints?: BlueprintManager;
+  components?: CustomComponentStore;
+  /** Injectable for tests; defaults to the env-configured LLM pipeline. */
+  generate?: (prompt: string) => Promise<GenerateResult>;
+}
+
+export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
+  const blueprints = deps.blueprints ?? new BlueprintManager();
+  const components = deps.components ?? new CustomComponentStore();
+  const generate =
+    deps.generate ??
+    ((prompt: string) => {
+      const llm = new LlmClient();
+      if (!llm.configured) {
+        throw Object.assign(new Error('LLM not configured — set OAS_LLM_API_KEY (see .env.example)'), { status: 503 });
+      }
+      return generateComponent(llm, prompt);
+    });
   const app = new Hono();
 
   // Studio talks to the gateway cross-origin during development. The gateway
@@ -173,6 +194,31 @@ export function createApp(manager: RunManager, blueprints: BlueprintManager = ne
     if (!record) return c.json({ error: 'blueprint not found' }, 404);
     return c.json(record);
   });
+
+  app.post('/api/components/generate', async (c) => {
+    let body: { prompt?: string };
+    try {
+      body = await c.req.json<{ prompt?: string }>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (!body.prompt?.trim()) return c.json({ error: 'prompt is required' }, 400);
+    try {
+      const result = await generate(body.prompt.trim());
+      const record = components.add({
+        manifest: result.component.manifest,
+        tsx: result.component.tsx,
+        prompt: body.prompt.trim(),
+        attempts: result.attempts,
+      });
+      return c.json(record, 201);
+    } catch (err) {
+      const status = (err as { status?: number }).status === 503 ? 503 : 422;
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, status);
+    }
+  });
+
+  app.get('/api/components', (c) => c.json(components.list()));
 
   app.get('/api/runs/:id/flows/:flowId/replay', (c) => {
     const record = manager.get(c.req.param('id'));
