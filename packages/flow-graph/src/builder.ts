@@ -18,7 +18,14 @@ export interface Observation {
   routeHint?: string;
   screenshotRef?: string;
   capturedAt?: string;
+  /** Best-effort human label captured at observation time (e.g. top text element). */
+  titleHint?: string;
 }
+
+/** Emitted as the graph grows — the live-streaming contract for Studio/gateway. */
+export type GraphEvent =
+  | { type: 'node'; node: ScreenNode; isNew: boolean }
+  | { type: 'edge'; edge: ActionEdge; isNew: boolean };
 
 export interface RecordActionOptions {
   guard?: GuardKind;
@@ -51,18 +58,31 @@ export class GraphBuilder {
   private nodeSeq = 0;
   private edgeSeq = 0;
 
-  constructor(private meta: Omit<IfgMeta, 'coverage'>) {}
+  constructor(
+    private meta: Omit<IfgMeta, 'coverage'>,
+    private onEvent?: (event: GraphEvent) => void,
+  ) {}
+
+  get counts(): { nodes: number; edges: number; actions: number } {
+    return {
+      nodes: this.nodesByFingerprint.size,
+      edges: this.edgesByKey.size,
+      actions: this.actionCount,
+    };
+  }
 
   /** Registers a screen state; returns its (possibly pre-existing) node id. */
   observe(obs: Observation): string {
     const fp = fingerprint(obs.tree);
     let node = this.nodesByFingerprint.get(fp);
+    const isNew = !node;
     if (!node) {
       node = { id: `n_${++this.nodeSeq}`, fingerprint: fp, visits: 0, evidence: [] };
       this.nodesByFingerprint.set(fp, node);
     }
     node.visits = (node.visits ?? 0) + 1;
     if (obs.routeHint && !node.routeHint) node.routeHint = obs.routeHint;
+    if (obs.titleHint && !node.title) node.title = obs.titleHint;
     if (obs.screenshotRef && (node.evidence?.length ?? 0) < 3) {
       node.evidence!.push({
         type: 'screenshot',
@@ -70,6 +90,7 @@ export class GraphBuilder {
         ...(obs.capturedAt ? { capturedAt: obs.capturedAt } : {}),
       });
     }
+    this.onEvent?.({ type: 'node', node, isNew });
     return node.id;
   }
 
@@ -83,6 +104,7 @@ export class GraphBuilder {
       action.direction ?? null,
     ]);
     let edge = this.edgesByKey.get(key);
+    const isNew = !edge;
     if (!edge) {
       edge = {
         id: `e_${++this.edgeSeq}`,
@@ -96,6 +118,7 @@ export class GraphBuilder {
     }
     if (opts.evidence && (edge.evidence?.length ?? 0) < 3) edge.evidence!.push(...opts.evidence);
     if (opts.latencyMs !== undefined) edge.latencyMs = opts.latencyMs;
+    this.onEvent?.({ type: 'edge', edge, isNew });
     return edge.id;
   }
 

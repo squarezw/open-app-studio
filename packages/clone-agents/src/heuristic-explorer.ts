@@ -4,6 +4,7 @@ import {
   GraphBuilder,
   selectorKey,
   type Action,
+  type GraphEvent,
   type InteractionFlowGraph,
   type Platform,
   type Selector,
@@ -28,6 +29,10 @@ export interface ExploreOptions {
   /** Consecutive backs at an exhausted dead end before giving up. */
   maxConsecutiveBacks?: number;
   log?: (message: string) => void;
+  /** Live graph-growth events (node/edge added) — the streaming contract. */
+  onEvent?: (event: GraphEvent) => void;
+  /** External stop condition, checked once per loop (budget, stall, abort). */
+  shouldStop?: (counts: { nodes: number; edges: number; actions: number }) => boolean;
 }
 
 interface Interactable {
@@ -40,11 +45,14 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   const maxBacks = opts.maxConsecutiveBacks ?? 3;
   const log = opts.log ?? (() => {});
 
-  const graph = new GraphBuilder({
-    appName: opts.appName ?? opts.appId,
-    appId: opts.appId,
-    platform: opts.platform ?? 'android-emulator',
-  });
+  const graph = new GraphBuilder(
+    {
+      appName: opts.appName ?? opts.appId,
+      appId: opts.appId,
+      platform: opts.platform ?? 'android-emulator',
+    },
+    opts.onEvent,
+  );
 
   await driver.launch(opts.appId);
 
@@ -63,11 +71,17 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       routeHint,
       screenshotRef,
       capturedAt: new Date().toISOString(),
+      titleHint: guessTitle(tree),
     });
 
     if (pending) {
       graph.recordAction(pending.fromId, pending.action, nodeId);
       pending = undefined;
+    }
+
+    if (opts.shouldStop?.(graph.counts)) {
+      log(`[${step}] external stop condition — stopping`);
+      break;
     }
 
     const interactables = collectInteractables(tree);
@@ -124,4 +138,18 @@ export function collectInteractables(root: UiNode): Interactable[] {
     if (node.text) return { text: node.text };
     return { xpath: `/${path.join('/')}`, index: path[path.length - 1] ?? 0 };
   }
+}
+
+/** Topmost short text element — a cheap human label for the screen. */
+export function guessTitle(root: UiNode): string | undefined {
+  let best: { text: string; y: number } | undefined;
+  const walk = (n: UiNode): void => {
+    const text = n.text?.trim();
+    if (text && text.length <= 40 && n.bounds && (!best || n.bounds.y < best.y)) {
+      best = { text, y: n.bounds.y };
+    }
+    n.children.forEach(walk);
+  };
+  walk(root);
+  return best?.text;
 }

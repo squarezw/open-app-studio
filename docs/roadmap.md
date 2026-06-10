@@ -14,12 +14,12 @@ The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive 
 
 ## M1 — Clone vertical slice (the headline feature)
 
-- [ ] Orchestrator + Cartographer agents; frontier scheduling; stop conditions
-- [ ] Acquirer: store-URL metadata scrape; APK install path; metadata-only fallback
-- [ ] Gateway: CloneRun job + WebSocket progress stream
-- [ ] Studio: project shell + **live Flow Graph viewer** (React Flow, screenshot nodes)
-- [ ] Annotator: screen roles, named flows; path replay via generated Maestro YAML
-- **Demo**: paste a Play Store URL → watch the graph grow live → click "Purchase" flow → replay it on the emulator.
+- [x] Orchestrator: stop conditions (budget / discovery-stall / cooperative abort), live graph events; Cartographer duties live in GraphBuilder (single-Explorer; multi-device frontier sharding moves to M4)
+- [x] Acquirer: store-URL parsing (App Store / Play), metadata fetch (iTunes lookup + Play scrape), metadata-only fallback → provisional `inferred` IFG
+- [x] Gateway: `POST /api/runs` + WebSocket event stream (buffered replay + live tail), flow replay-script endpoint
+- [ ] Studio: project shell + **live Flow Graph viewer** (React Flow, screenshot nodes) — interim: built-in dependency-free live viewer served at gateway `/`
+- [x] Annotator v0 (rule-based): screen roles + named flows; replay via generated Maestro YAML (`flows/*.yaml`); LLM Annotator lands with M3 semantics work
+- **Demo**: paste a Play Store URL → watch the graph grow live → click "Purchase" flow → replay it on the emulator. *Today (no emulator needed):* `pnpm --filter @oas/gateway start` → open `http://localhost:4400` → "Run fake demo".
 
 ## M2 — From graph to app (close the loop)
 
