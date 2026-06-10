@@ -11,7 +11,9 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "test": "turbo run test",
-    "lint": "turbo run lint"
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
   }
 }

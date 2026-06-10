@@ -6,11 +6,11 @@ Milestones are scoped so each one ends with something demoable.
 
 The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive an arbitrary app on an emulator and produce a clean state graph?
 
-- [ ] Monorepo scaffolding (pnpm + Turborepo), CI, schemas checked in
-- [ ] `device-bridge`: Android emulator driver (Maestro + adb), `screenshot/uiTree/tap/type/swipe`
-- [ ] Single-Explorer spike: hardcoded simple app (e.g. an OSS demo app) → TraceEvents → naive graph
-- [ ] `flow-graph`: fingerprinting + merge; dump graph as JSON
-- **Demo**: CLI run that explores one app and prints a node/edge summary with screenshots in a folder.
+- [x] Monorepo scaffolding (pnpm + Turborepo), CI, schemas checked in
+- [x] `device-bridge`: Android driver over adb (`screenshot/uiTree/tap/type/swipe/back/deepLink`); Maestro driver lands in M1
+- [x] Single-Explorer spike: heuristic (LLM-free) explorer with integration test on a simulated 5-screen app
+- [x] `flow-graph`: structural fingerprinting + graph builder (dedup, edge canonicalization, frontier); IFG validates against the JSON Schema
+- **Demo**: `oas-spike --app <package>` explores an installed app on a running emulator and writes `ifg.json` + screenshots. ✅ implemented — run against a real emulator pending.
 
 ## M1 — Clone vertical slice (the headline feature)
 
