@@ -1,0 +1,33 @@
+{
+  "name": "@oas/codegen",
+  "version": "0.1.0",
+  "description": "App Spec → standalone Expo (React Native) project; IFG flows → Maestro E2E tests",
+  "license": "GPL-3.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "oas-codegen": "./dist/cli.js"
+  },
+  "files": ["dist", "templates"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@oas/app-spec": "workspace:*",
+    "@oas/component-registry": "workspace:*",
+    "@oas/flow-graph": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
