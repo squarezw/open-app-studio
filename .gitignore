@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.turbo/
+.next/
+.expo/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+# clone-run artifacts (screenshots, traces) — stored in object storage, not git
+runs/
