@@ -12,6 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@oas/app-spec": "workspace:*",
+    "@oas/component-registry": "workspace:*",
     "@oas/flow-graph": "workspace:*",
     "@xyflow/react": "^12.3.0",
     "next": "^15.1.0",
