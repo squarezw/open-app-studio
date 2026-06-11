@@ -10,7 +10,7 @@ The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive 
 - [x] `device-bridge`: Android driver over adb (`screenshot/uiTree/tap/type/swipe/back/deepLink`); Maestro driver lands in M1
 - [x] Single-Explorer spike: heuristic (LLM-free) explorer with integration test on a simulated 5-screen app
 - [x] `flow-graph`: structural fingerprinting + graph builder (dedup, edge canonicalization, frontier); IFG validates against the JSON Schema
-- **Demo**: `oas-spike --app <package>` explores an installed app on a running emulator and writes `ifg.json` + screenshots. ✅ implemented — run against a real emulator pending.
+- **Demo**: `oas-spike --app <package>` explores an installed app on a running emulator and writes `ifg.json` + screenshots. ✅ verified on a real emulator (Android 35 / Pixel 7 AVD): explored `com.android.settings` — 15 screens, 24 transitions, 10 named flows incl. auth/search role detection, 25 screenshots.
 
 ## M1 — Clone vertical slice (the headline feature)
 
