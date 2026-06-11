@@ -37,7 +37,32 @@ export class AdbDriver implements DeviceDriver {
   }
 
   async launch(appId: string): Promise<void> {
-    await this.run(['shell', 'monkey', '-p', appId, '-c', 'android.intent.category.LAUNCHER', '1']);
+    // `monkey -p <pkg> 1` is the classic launcher but exits non-zero on recent
+    // emulator images (SYS_KEYS warning → exit 251). Resolve the launcher
+    // activity and `am start` it instead; fall back to monkey for packages
+    // without a LAUNCHER intent.
+    const resolved = (
+      await this.run([
+        'shell', 'cmd', 'package', 'resolve-activity', '--brief',
+        '-c', 'android.intent.category.LAUNCHER', appId,
+      ]).catch(() => Buffer.from(''))
+    )
+      .toString('utf8')
+      .trim()
+      .split('\n')
+      .pop()
+      ?.trim();
+
+    if (resolved?.includes('/')) {
+      await this.run([
+        'shell', 'am', 'start',
+        '-a', 'android.intent.action.MAIN',
+        '-c', 'android.intent.category.LAUNCHER',
+        '-n', resolved,
+      ]);
+    } else {
+      await this.run(['shell', 'monkey', '-p', appId, '-c', 'android.intent.category.LAUNCHER', '1']);
+    }
     await this.waitForIdle(this.settleMs * 2);
   }
 
