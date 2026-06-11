@@ -38,6 +38,10 @@ export interface ExploreOptions {
 interface Interactable {
   selector: Selector;
   center: { x: number; y: number };
+  /** A text field we should type into rather than just tap. */
+  editable: boolean;
+  /** Hint for input synthesis (resource id + content-desc + class, lowercased). */
+  hint: string;
 }
 
 export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promise<InteractionFlowGraph> {
@@ -95,9 +99,26 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     if (next) {
       consecutiveBacks = 0;
       graph.markTried(nodeId, next.selector);
-      log(`[${step}] ${nodeId} tap ${JSON.stringify(next.selector)}`);
-      await driver.tap(next.center);
-      pending = { fromId: nodeId, action: { kind: 'tap', selector: next.selector, point: next.center } };
+      if (next.editable) {
+        // Text field: focus, synthesize input, submit, then close the keyboard.
+        // Without this the explorer just re-taps the field and the soft
+        // keyboard (or IME tutorial dialog) traps it on one screen.
+        const value = synthesizeInput(next.hint);
+        log(`[${step}] ${nodeId} type ${JSON.stringify(value)} into ${JSON.stringify(next.selector)}`);
+        await driver.tap(next.center);
+        await driver.waitForIdle();
+        await driver.type(value);
+        await driver.pressEnter();
+        await driver.back(); // dismiss keyboard / IME overlay if still up
+        pending = {
+          fromId: nodeId,
+          action: { kind: 'type', selector: next.selector, point: next.center, inputValue: value },
+        };
+      } else {
+        log(`[${step}] ${nodeId} tap ${JSON.stringify(next.selector)}`);
+        await driver.tap(next.center);
+        pending = { fromId: nodeId, action: { kind: 'tap', selector: next.selector, point: next.center } };
+      }
     } else {
       consecutiveBacks += 1;
       if (consecutiveBacks > maxBacks) {
@@ -114,7 +135,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   return graph.toIFG();
 }
 
-/** Clickable, enabled, visibly-sized elements, top-to-bottom. */
+/** Clickable (or editable), enabled, visibly-sized elements, top-to-bottom. */
 export function collectInteractables(root: UiNode): Interactable[] {
   const out: Interactable[] = [];
   walk(root, []);
@@ -123,10 +144,13 @@ export function collectInteractables(root: UiNode): Interactable[] {
 
   function walk(node: UiNode, path: number[]): void {
     const b = node.bounds;
-    if (node.clickable && node.enabled !== false && b && b.w > 0 && b.h > 0) {
+    const editable = isEditable(node);
+    if ((node.clickable || editable) && node.enabled !== false && b && b.w > 0 && b.h > 0) {
       out.push({
         selector: toSelector(node, path),
         center: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
+        editable,
+        hint: `${node.resourceId ?? ''} ${node.contentDesc ?? ''} ${node.className}`.toLowerCase(),
       });
     }
     node.children.forEach((c, i) => walk(c, [...path, i]));
@@ -138,6 +162,27 @@ export function collectInteractables(root: UiNode): Interactable[] {
     if (node.text) return { text: node.text };
     return { xpath: `/${path.join('/')}`, index: path[path.length - 1] ?? 0 };
   }
+}
+
+/**
+ * True text-entry widgets only — EditText / SearchView / AutoComplete. A
+ * clickable View that merely *opens* a search screen is left as a normal tap
+ * (it navigates forward); the real input box on the next screen is what we type
+ * into.
+ */
+function isEditable(node: UiNode): boolean {
+  const cls = node.className.toLowerCase();
+  return cls.includes('edittext') || cls.includes('searchview') || cls.includes('autocomplete');
+}
+
+/** Synthesize a plausible value for a field from its hint (design: realistic inputs, never real creds). */
+export function synthesizeInput(hint: string): string {
+  if (/pass(word|code)|pwd/.test(hint)) return 'Test1234!';
+  if (/email|e-mail/.test(hint)) return 'test@example.com';
+  if (/phone|mobile|tel/.test(hint)) return '5551234567';
+  if (/zip|postal/.test(hint)) return '10001';
+  if (/search|query|find/.test(hint)) return 'vitamin';
+  return 'test';
 }
 
 /** Topmost short text element — a cheap human label for the screen. */

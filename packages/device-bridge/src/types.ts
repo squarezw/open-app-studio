@@ -14,6 +14,8 @@ export interface DeviceDriver {
   tap(point: Point): Promise<void>;
   swipe(from: Point, to: Point, durationMs?: number): Promise<void>;
   type(text: string): Promise<void>;
+  /** Submit the focused input (IME action / Enter), e.g. to run a search. */
+  pressEnter(): Promise<void>;
   back(): Promise<void>;
   deepLink(url: string): Promise<void>;
   /** Platform route hint for the current screen (activity name, etc.). */

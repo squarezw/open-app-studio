@@ -4,7 +4,7 @@ import addFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 import type { DeviceDriver } from '@oas/device-bridge';
 import type { Point, UiNode } from '@oas/flow-graph';
-import { explore } from '../src/heuristic-explorer.js';
+import { collectInteractables, explore, synthesizeInput } from '../src/heuristic-explorer.js';
 
 /**
  * A fake 5-screen app:
@@ -99,6 +99,7 @@ class FakeDriver implements DeviceDriver {
   }
   async swipe(): Promise<void> {}
   async type(): Promise<void> {}
+  async pressEnter(): Promise<void> {}
   async deepLink(): Promise<void> {}
   async routeHint(): Promise<string | undefined> {
     return `com.demo/.${this.current}Activity`;
@@ -164,5 +165,91 @@ describe('heuristic explorer (integration, fake device)', () => {
     const ifg = await explore(driver, { appId: 'com.demo', maxActions: 3 });
     expect(ifg.meta.coverage?.actions).toBeLessThanOrEqual(3);
     expect((ifg.frontier?.length ?? 0)).toBeGreaterThan(0);
+  });
+});
+
+describe('text input handling', () => {
+  it('detects EditText and search fields as editable', () => {
+    const screen: UiNode = {
+      className: 'FrameLayout',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/q', clickable: true, enabled: true, bounds: { x: 0, y: 100, w: 1080, h: 120 }, children: [] },
+        { className: 'androidx.appcompat.widget.SearchView', resourceId: 'com.x:id/sv', clickable: true, enabled: true, bounds: { x: 0, y: 240, w: 1080, h: 120 }, children: [] },
+        // A clickable View that merely opens the search screen — a tap, not an input.
+        { className: 'android.view.View', resourceId: 'com.x:id/iCLTopBarInputRect', clickable: true, enabled: true, contentDesc: 'Search iHerb', bounds: { x: 0, y: 380, w: 1080, h: 120 }, children: [] },
+        { className: 'android.widget.Button', resourceId: 'com.x:id/go', clickable: true, enabled: true, bounds: { x: 0, y: 520, w: 1080, h: 120 }, children: [] },
+      ],
+    };
+    const items = collectInteractables(screen);
+    const byId = (id: string) => items.find((i) => i.selector.resourceId === id);
+    expect(byId('com.x:id/q')!.editable).toBe(true);
+    expect(byId('com.x:id/sv')!.editable).toBe(true);
+    expect(byId('com.x:id/iCLTopBarInputRect')!.editable).toBe(false);
+    expect(byId('com.x:id/go')!.editable).toBe(false);
+  });
+
+  it('synthesizes plausible values by field hint, never real creds', () => {
+    expect(synthesizeInput('com.x:id/search_query searchview')).toBe('vitamin');
+    expect(synthesizeInput('login password field')).toBe('Test1234!');
+    expect(synthesizeInput('email address')).toBe('test@example.com');
+    expect(synthesizeInput('phone number')).toBe('5551234567');
+    expect(synthesizeInput('some other field')).toBe('test');
+  });
+
+  it('types + submits into a search box instead of re-tapping (the iHerb trap)', async () => {
+    // A search screen whose box, once submitted, leads to a results screen.
+    const search: UiNode = {
+      className: 'screen.search',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/search_box', clickable: true, enabled: true, contentDesc: 'Search', bounds: { x: 0, y: 100, w: 1080, h: 120 }, children: [] },
+      ],
+    };
+    const results: UiNode = {
+      className: 'screen.results',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [{ className: 'android.widget.TextView', text: 'Results', bounds: { x: 40, y: 60, w: 400, h: 60 }, children: [] }],
+    };
+
+    const calls: string[] = [];
+    let submitted = false;
+    const driver: DeviceDriver = {
+      async launch() {},
+      async uiTree() {
+        return submitted ? results : search;
+      },
+      async tap() {
+        calls.push('tap');
+      },
+      async type(t: string) {
+        calls.push(`type:${t}`);
+      },
+      async pressEnter() {
+        calls.push('enter');
+        submitted = true; // search submitted → next screen is results
+      },
+      async back() {
+        calls.push('back');
+      },
+      async swipe() {},
+      async deepLink() {},
+      async screenshot(p: string) {
+        return p;
+      },
+      async routeHint() {
+        return undefined;
+      },
+      async waitForIdle() {},
+    };
+
+    const ifg = await explore(driver, { appId: 'com.x', maxActions: 4 });
+    expect(calls).toContain('type:vitamin');
+    expect(calls).toContain('enter');
+    // the typed search produced a forward transition to the results screen
+    const typeEdge = ifg.edges.find((e) => e.action.kind === 'type');
+    expect(typeEdge).toBeDefined();
+    expect(typeEdge!.action.inputValue).toBe('vitamin');
+    expect(ifg.nodes.length).toBeGreaterThanOrEqual(2);
   });
 });
