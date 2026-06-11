@@ -113,6 +113,10 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 
 .promote { width: 100%; margin-top: 14px; }
 .run-error { color: #ff5370; font-size: 12px; margin-top: 12px; line-height: 1.5; white-space: pre-wrap; }
+.run-done { color: #c3e88d; font-size: 12px; margin-top: 14px; line-height: 1.5; }
+.run-hint { color: var(--muted); font-size: 12px; margin-top: 14px; line-height: 1.5; }
+.budget-field { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.budget-field input { width: 72px; }
 
 /* ── Blueprint editor ─────────────────────────────────────── */
 

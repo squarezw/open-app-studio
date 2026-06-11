@@ -127,9 +127,24 @@ export default function RunView({ id }: { id: string }) {
         )}
         {run?.status === 'error' && run.error && <p className="run-error">{run.error}</p>}
         {run?.status === 'done' && graph.nodes.length > 0 && (
-          <button className="primary promote" onClick={promote} disabled={promoting}>
-            {promoting ? 'Promoting…' : '🧱 Promote to Blueprint'}
-          </button>
+          <>
+            <p className="run-done">
+              ✓ Explored {graph.nodes.length} screens.
+              {(graph.frontier?.length ?? 0) > 0 && (
+                <>
+                  {' '}
+                  {graph.frontier!.length} more entry points were seen but not visited (budget reached) — raise the
+                  budget on the home page to dig deeper.
+                </>
+              )}
+            </p>
+            <button className="primary promote" onClick={promote} disabled={promoting}>
+              {promoting ? 'Promoting…' : '🧱 Promote to Blueprint'}
+            </button>
+          </>
+        )}
+        {run?.status === 'running' && (
+          <p className="run-hint">Exploring live — watch the emulator. The graph grows as screens are found.</p>
         )}
 
         <h2>User flows</h2>

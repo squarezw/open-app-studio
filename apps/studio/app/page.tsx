@@ -10,6 +10,7 @@ export default function HomePage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [target, setTarget] = useState('');
   const [driver, setDriver] = useState<'fake' | 'adb'>('fake');
+  const [budget, setBudget] = useState(120);
   const [error, setError] = useState<string>();
   const [offline, setOffline] = useState(false);
 
@@ -32,7 +33,7 @@ export default function HomePage() {
   async function createRun(e: React.FormEvent) {
     e.preventDefault();
     setError(undefined);
-    const body: Record<string, unknown> = { driver, maxActions: 60 };
+    const body: Record<string, unknown> = { driver, maxActions: budget };
     if (/^https?:\/\//.test(target)) body.url = target;
     else body.appId = target || 'com.fakeshop';
     const res = await fetch(`${GATEWAY_URL}/api/runs`, {
@@ -61,6 +62,17 @@ export default function HomePage() {
           <option value="fake">fake device (demo)</option>
           <option value="adb">adb (emulator)</option>
         </select>
+        <label className="budget-field" title="Max actions — higher explores deeper but takes longer">
+          budget
+          <input
+            type="number"
+            min={10}
+            max={1000}
+            step={10}
+            value={budget}
+            onChange={(e) => setBudget(Math.max(10, Number(e.target.value) || 10))}
+          />
+        </label>
         <button type="submit" className="primary">
           ▶ Clone
         </button>
