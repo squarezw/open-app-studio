@@ -10,6 +10,7 @@ import {
   type Selector,
   type UiNode,
 } from '@oas/flow-graph';
+import { scoreCandidate, signatureOf } from './policy.js';
 
 /**
  * M0 spike: a deterministic, LLM-free Explorer. It walks the app breadth-first
@@ -60,8 +61,13 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
 
   await driver.launch(opts.appId);
 
-  let pending: { fromId: string; action: Action } | undefined;
+  let pending: { fromId: string; action: Action; signature?: string } | undefined;
   let consecutiveBacks = 0;
+  let launchNodeId: string | undefined;
+  // Cross-screen learning: which node a recurring button leads to, and how
+  // often we've landed on each node — so we stop re-opening known dead-ends.
+  const destinationOf = new Map<string, string>();
+  const visitCount = new Map<string, number>();
 
   for (let step = 0; step < maxActions; step++) {
     const tree = await driver.uiTree();
@@ -77,9 +83,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       capturedAt: new Date().toISOString(),
       titleHint: guessTitle(tree),
     });
+    launchNodeId ??= nodeId;
+    visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
 
     if (pending) {
       graph.recordAction(pending.fromId, pending.action, nodeId);
+      // Record where this button actually went (first destination wins).
+      if (pending.signature && !destinationOf.has(pending.signature)) {
+        destinationOf.set(pending.signature, nodeId);
+      }
       pending = undefined;
     }
 
@@ -88,13 +100,40 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       break;
     }
 
+    const screenHeight = tree.bounds?.h ?? 2400;
     const interactables = collectInteractables(tree);
     for (const i of interactables) graph.noteInteractable(nodeId, i.selector);
 
-    const untried = graph.untried(nodeId);
-    const next = untried.length > 0
-      ? interactables.find((i) => selectorKey(i.selector) === selectorKey(untried[0]!))
-      : undefined;
+    // Among untried interactables on this screen, pick the highest-priority one:
+    // core flows > unseen destinations > known/visited dead-ends (policy.ts).
+    const untriedKeys = new Set(graph.untried(nodeId).map((s) => selectorKey(s)));
+    const candidates = interactables.filter((i) => untriedKeys.has(selectorKey(i.selector)));
+    let next: Interactable | undefined;
+    let bestScore = -Infinity;
+    for (const cand of candidates) {
+      const signature = signatureOf(cand.selector);
+      const dest = destinationOf.get(signature);
+      // Prune: a recurring button (e.g. the top-bar scanner) whose destination
+      // we've already fully explored is dead weight on every other screen.
+      // Mark it handled and never tap it again — this is the core fix for the
+      // "barcode scanner reopened from every screen" problem.
+      if (dest && dest !== nodeId && !graph.hasUntried(dest)) {
+        graph.markTried(nodeId, cand.selector);
+        continue;
+      }
+      const score = scoreCandidate({
+        hint: cand.hint,
+        signature,
+        yFraction: cand.center.y / screenHeight,
+        knownDestination: dest,
+        destinationVisits: dest ? (visitCount.get(dest) ?? 0) : 0,
+        onHome: nodeId === launchNodeId,
+      });
+      if (score > bestScore) {
+        bestScore = score;
+        next = cand;
+      }
+    }
 
     if (next) {
       consecutiveBacks = 0;
@@ -113,11 +152,16 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         pending = {
           fromId: nodeId,
           action: { kind: 'type', selector: next.selector, point: next.center, inputValue: value },
+          signature: signatureOf(next.selector),
         };
       } else {
         log(`[${step}] ${nodeId} tap ${JSON.stringify(next.selector)}`);
         await driver.tap(next.center);
-        pending = { fromId: nodeId, action: { kind: 'tap', selector: next.selector, point: next.center } };
+        pending = {
+          fromId: nodeId,
+          action: { kind: 'tap', selector: next.selector, point: next.center },
+          signature: signatureOf(next.selector),
+        };
       }
     } else {
       consecutiveBacks += 1;

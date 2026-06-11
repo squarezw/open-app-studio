@@ -253,3 +253,68 @@ describe('text input handling', () => {
     expect(ifg.nodes.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('prioritization & revisit suppression', () => {
+  /**
+   * home & cart both expose the SAME top-bar scanner button (resourceId
+   * com.x:id/scan) leading to one dead-end scanner screen. The explorer should
+   * open the scanner at most once and prefer the core cart→checkout path.
+   */
+  function btnNode(resourceId: string, text: string, y: number): UiNode {
+    return { className: 'android.widget.Button', resourceId, text, clickable: true, enabled: true, bounds: { x: 0, y, w: 1080, h: 140 }, children: [] };
+  }
+  const SHOP: Record<string, UiNode> = {
+    home: { className: 'screen.home', bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children: [
+      btnNode('com.x:id/scan', 'Scan barcode', 80),
+      btnNode('com.x:id/cart', 'Cart', 300),
+    ] },
+    cart: { className: 'screen.cart', bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children: [
+      btnNode('com.x:id/scan', 'Scan barcode', 80), // SAME recurring scanner button
+      btnNode('com.x:id/checkout', 'Checkout', 300),
+    ] },
+    scanner: { className: 'screen.scanner', bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children: [] }, // dead end
+    checkout: { className: 'screen.checkout', bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children: [] },
+  };
+  const NAV: Record<string, Record<string, string>> = {
+    home: { 'com.x:id/scan': 'scanner', 'com.x:id/cart': 'cart' },
+    cart: { 'com.x:id/scan': 'scanner', 'com.x:id/checkout': 'checkout' },
+  };
+
+  class ShopDriver implements DeviceDriver {
+    current = 'home';
+    stack: string[] = [];
+    async launch() { this.current = 'home'; this.stack = []; }
+    async uiTree() { return SHOP[this.current]!; }
+    async tap(p: Point) {
+      const hit = findHit(SHOP[this.current]!, p);
+      const target = hit?.resourceId ? NAV[this.current]?.[hit.resourceId] : undefined;
+      if (target) { this.stack.push(this.current); this.current = target; }
+    }
+    async back() { this.current = this.stack.pop() ?? 'home'; }
+    async screenshot(o: string) { return o; }
+    async swipe() {}
+    async type() {}
+    async pressEnter() {}
+    async deepLink() {}
+    async routeHint() { return `com.x/.${this.current}`; }
+    async waitForIdle() {}
+  }
+  function findHit(node: UiNode, p: Point): UiNode | undefined {
+    let f: UiNode | undefined;
+    const walk = (n: UiNode) => {
+      const b = n.bounds;
+      if (n.clickable && b && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) f = n;
+      n.children.forEach(walk);
+    };
+    walk(node);
+    return f;
+  }
+
+  it('opens a recurring dead-end (scanner) once, and reaches the core checkout flow', async () => {
+    const ifg = await explore(new ShopDriver(), { appId: 'com.x', maxActions: 30 });
+    const titleVisits = (route: string) => ifg.nodes.find((n) => n.routeHint === route)?.visits ?? 0;
+
+    expect(titleVisits('com.x/.checkout')).toBeGreaterThanOrEqual(1); // core path reached
+    expect(titleVisits('com.x/.scanner')).toBe(1); // scanner entered exactly once, not from both screens
+  });
+});
