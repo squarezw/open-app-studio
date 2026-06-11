@@ -32,6 +32,7 @@ The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive 
 ## M3 — AI component generation & polish
 
 - [x] Component Generator agent + sandbox repair loop — `@oas/llm` (provider-agnostic OpenAI-compatible client, DeepSeek default) + `@oas/component-gen` (TSX parse, import allowlist, banned constructs, export/manifest checks; errors fed back, max 3 attempts); gateway `POST /api/components/generate`; Studio ✨ AI panel + "Custom (AI)" palette; codegen writes custom components into generated projects. Full semantic typecheck/headless render in sandbox: still open (today it's verified at project level).
+- [x] **LLM Explorer (goal-directed brain)** — `@oas/llm` decider chooses the next action with reasoning toward core flows (browse→product→cart→checkout, auth); pluggable into the explore loop with the heuristic policy as fallback (≤1 candidate or any error). Gateway `brain: llm|heuristic` (default llm when configured); Studio brain selector. Added an app-package guard: relaunches the target if exploration strays onto the launcher/another app. Verified on iHerb/DeepSeek — stayed in-app, drove the add-to-cart path deliberately.
 - [ ] Screenshot-region → component generation (visual matching without asset copying)
 - [ ] Theme token extraction from IFG screenshots
 - [ ] LLM Annotator (replace keyword roles with semantic judgment); AI sidebar patch-review for spec edits

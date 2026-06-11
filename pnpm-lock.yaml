@@ -131,6 +131,9 @@ importers:
       '@oas/flow-graph':
         specifier: workspace:*
         version: link:../flow-graph
+      '@oas/llm':
+        specifier: workspace:*
+        version: link:../llm
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

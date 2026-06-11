@@ -192,6 +192,34 @@ describe('gateway API', () => {
     expect(res503.status).toBe(503);
   });
 
+  it('reports the exploration brain and honors brain=heuristic', async () => {
+    let deciderBuilt = 0;
+    const { app } = makeApp({
+      makeDecider: () => {
+        deciderBuilt += 1;
+        return { brain: 'llm' as const, goal: 'g', decide: (ctx) => ({ act: 'tap' as const, index: 0 }) };
+      },
+    });
+
+    // default → uses the (fake) LLM brain
+    const llmRun = await app.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'com.fakeshop', driver: 'fake', maxActions: 20 }),
+    });
+    expect((await llmRun.json()).brain).toBe('llm');
+    expect(deciderBuilt).toBe(1);
+
+    // explicit heuristic → does not build the LLM decider
+    const heuristicRun = await app.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'com.fakeshop', driver: 'fake', brain: 'heuristic', maxActions: 20 }),
+    });
+    expect((await heuristicRun.json()).brain).toBe('heuristic');
+    expect(deciderBuilt).toBe(1); // unchanged
+  });
+
   it('serves the live viewer page', async () => {
     const { app } = makeApp();
     const res = await app.request('/');

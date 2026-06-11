@@ -10,6 +10,7 @@ export default function HomePage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [target, setTarget] = useState('');
   const [driver, setDriver] = useState<'fake' | 'adb'>('fake');
+  const [brain, setBrain] = useState<'llm' | 'heuristic'>('llm');
   const [budget, setBudget] = useState(120);
   const [error, setError] = useState<string>();
   const [offline, setOffline] = useState(false);
@@ -33,7 +34,7 @@ export default function HomePage() {
   async function createRun(e: React.FormEvent) {
     e.preventDefault();
     setError(undefined);
-    const body: Record<string, unknown> = { driver, maxActions: budget };
+    const body: Record<string, unknown> = { driver, brain, maxActions: budget };
     if (/^https?:\/\//.test(target)) body.url = target;
     else body.appId = target || 'com.fakeshop';
     const res = await fetch(`${GATEWAY_URL}/api/runs`, {
@@ -61,6 +62,10 @@ export default function HomePage() {
         <select value={driver} onChange={(e) => setDriver(e.target.value as 'fake' | 'adb')}>
           <option value="fake">fake device (demo)</option>
           <option value="adb">adb (emulator)</option>
+        </select>
+        <select value={brain} onChange={(e) => setBrain(e.target.value as 'llm' | 'heuristic')} title="Exploration brain">
+          <option value="llm">AI brain (LLM)</option>
+          <option value="heuristic">heuristic (fast)</option>
         </select>
         <label className="budget-field" title="Max actions — higher explores deeper but takes longer">
           budget

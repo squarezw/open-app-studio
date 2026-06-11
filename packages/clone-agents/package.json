@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "@oas/device-bridge": "workspace:*",
-    "@oas/flow-graph": "workspace:*"
+    "@oas/flow-graph": "workspace:*",
+    "@oas/llm": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { DeviceDriver } from '@oas/device-bridge';
 import type { GraphEvent, InteractionFlowGraph, Platform } from '@oas/flow-graph';
 import { annotate, deriveFlows } from './annotator.js';
-import { explore } from './heuristic-explorer.js';
+import { explore, type Decider } from './heuristic-explorer.js';
 
 /**
  * Owns one clone run end-to-end: exploration (with budget + stall stop
@@ -27,6 +27,10 @@ export interface CloneRunOptions {
   /** Stop when this many actions pass without discovering a new screen. */
   stallThreshold?: number;
   outDir?: string;
+  /** Decision strategy (e.g. the LLM brain); defaults to the heuristic policy. */
+  decide?: Decider;
+  /** High-level goal for a goal-directed decider. */
+  goal?: string;
 }
 
 export class Orchestrator extends EventEmitter {
@@ -56,6 +60,8 @@ export class Orchestrator extends EventEmitter {
         platform: this.opts.platform,
         maxActions: this.opts.maxActions,
         outDir: this.opts.outDir,
+        decide: this.opts.decide,
+        goal: this.opts.goal,
         log: (m) => this.emit('log', m),
         onEvent: (event: GraphEvent) => {
           if (event.type === 'node' && event.isNew) lastDiscoveryAction = latestActions;
