@@ -3,8 +3,10 @@ import { cors } from 'hono/cors';
 import { compileBlueprint } from '@oas/app-spec';
 import {
   fetchStoreMetadata,
+  makeLlmDecider,
   parseStoreUrl,
   provisionalIfgFromMetadata,
+  type Decider,
 } from '@oas/clone-agents';
 import { AdbDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
 import { replayScript } from '@oas/flow-graph';
@@ -25,6 +27,8 @@ interface CreateRunBody {
   serial?: string;
   maxActions?: number;
   stallThreshold?: number;
+  /** 'llm' = goal-directed AI brain (needs OAS_LLM_API_KEY); 'heuristic' = policy only. Default: llm if configured. */
+  brain?: 'llm' | 'heuristic';
 }
 
 export interface AppDeps {
@@ -32,6 +36,8 @@ export interface AppDeps {
   components?: CustomComponentStore;
   /** Injectable for tests; defaults to the env-configured LLM pipeline. */
   generate?: (prompt: string) => Promise<GenerateResult>;
+  /** Injectable for tests; builds the exploration brain. Defaults to env-configured LLM, else heuristic. */
+  makeDecider?: (appName?: string) => { decide?: Decider; goal?: string; brain: 'llm' | 'heuristic' };
 }
 
 export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
@@ -45,6 +51,14 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
         throw Object.assign(new Error('LLM not configured — set OAS_LLM_API_KEY (see .env.example)'), { status: 503 });
       }
       return generateComponent(llm, prompt);
+    });
+  const makeDecider =
+    deps.makeDecider ??
+    ((appName?: string) => {
+      const llm = new LlmClient();
+      if (!llm.configured) return { brain: 'heuristic' as const };
+      const goal = `Map the interaction flows of the app${appName ? ` "${appName}"` : ''}. Prioritise core user journeys: browse/search → product detail → add to cart → cart → checkout (stop before paying), and account sign-up / log-in. Avoid dwelling in utility areas (barcode scanner, share, settings, notifications).`;
+      return { brain: 'llm' as const, goal, decide: makeLlmDecider(llm) };
     });
   const app = new Hono();
 
@@ -99,14 +113,20 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
 
     const driver: DeviceDriver =
       body.driver === 'fake' ? new FakeDriver() : new AdbDriver({ serial: body.serial });
+
+    const wantHeuristic = body.brain === 'heuristic';
+    const brainSetup = wantHeuristic ? { brain: 'heuristic' as const } : makeDecider(appName);
+
     const record = manager.start(driver, {
       appId,
       appName,
       storeUrl,
       maxActions: body.maxActions,
       stallThreshold: body.stallThreshold,
+      decide: brainSetup.decide,
+      goal: brainSetup.goal,
     });
-    return c.json({ runId: record.id, mode: 'explore' }, 201);
+    return c.json({ runId: record.id, mode: 'explore', brain: brainSetup.brain }, 201);
   });
 
   app.get('/api/runs', (c) =>

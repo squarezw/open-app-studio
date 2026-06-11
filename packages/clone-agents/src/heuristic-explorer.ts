@@ -34,6 +34,10 @@ export interface ExploreOptions {
   onEvent?: (event: GraphEvent) => void;
   /** External stop condition, checked once per loop (budget, stall, abort). */
   shouldStop?: (counts: { nodes: number; edges: number; actions: number }) => boolean;
+  /** Decision strategy: which candidate to act on. Defaults to the heuristic policy. */
+  decide?: Decider;
+  /** High-level goal passed to a goal-directed (LLM) decider. */
+  goal?: string;
 }
 
 interface Interactable {
@@ -43,6 +47,44 @@ interface Interactable {
   editable: boolean;
   /** Hint for input synthesis (resource id + content-desc + class, lowercased). */
   hint: string;
+}
+
+/** A scored, pickable element on the current screen (passed to a Decider). */
+export interface Candidate {
+  index: number;
+  label: string;
+  hint: string;
+  editable: boolean;
+  score: number;
+  selector: Selector;
+  center: { x: number; y: number };
+}
+
+export interface DecisionContext {
+  goal?: string;
+  screen: { title?: string; routeHint?: string; visits: number };
+  candidates: Candidate[];
+  /** Recent "screen → action" lines, oldest first. */
+  history: string[];
+}
+
+export type Decision =
+  | { act: 'tap'; index: number; reason?: string }
+  | { act: 'type'; index: number; value?: string; reason?: string }
+  | { act: 'back'; reason?: string }
+  | { act: 'stop'; reason?: string };
+
+export type Decider = (ctx: DecisionContext) => Decision | Promise<Decision>;
+
+/** Default policy-driven decider: take the highest-scoring candidate. */
+export const heuristicDecide: Decider = (ctx) => {
+  if (ctx.candidates.length === 0) return { act: 'back', reason: 'no candidates' };
+  const best = ctx.candidates.reduce((a, b) => (b.score > a.score ? b : a));
+  return best.editable ? { act: 'type', index: best.index } : { act: 'tap', index: best.index };
+};
+
+function labelOf(selector: Selector): string {
+  return selector.text ?? selector.accessibilityId ?? selector.resourceId?.split('/').pop() ?? 'element';
 }
 
 export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promise<InteractionFlowGraph> {
@@ -59,11 +101,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     opts.onEvent,
   );
 
+  const decide = opts.decide ?? heuristicDecide;
   await driver.launch(opts.appId);
 
   let pending: { fromId: string; action: Action; signature?: string } | undefined;
   let consecutiveBacks = 0;
   let launchNodeId: string | undefined;
+  let appPackage: string | undefined;
+  let consecutiveRelaunches = 0;
+  const history: string[] = [];
   // Cross-screen learning: which node a recurring button leads to, and how
   // often we've landed on each node — so we stop re-opening known dead-ends.
   const destinationOf = new Map<string, string>();
@@ -72,6 +118,25 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   for (let step = 0; step < maxActions; step++) {
     const tree = await driver.uiTree();
     const routeHint = await driver.routeHint();
+
+    // Stay inside the app under test. Pressing back on the root screen, or
+    // tapping something that opens another app, drops us on the launcher /
+    // Google app — we must NOT map those. Detect a foreign foreground package
+    // and relaunch the target instead of recording the stray screen.
+    const pkg = routeHint?.split('/')[0];
+    if (appPackage && pkg && pkg !== appPackage) {
+      if (++consecutiveRelaunches > 3) {
+        log(`[${step}] left ${appPackage} and couldn't return (now ${pkg}) — stopping`);
+        break;
+      }
+      log(`[${step}] left app (foreground ${pkg}) — relaunching ${opts.appId}`);
+      await driver.launch(opts.appId);
+      pending = undefined; // drop the edge that led out of the app
+      await driver.waitForIdle();
+      continue;
+    }
+    consecutiveRelaunches = 0;
+
     let screenshotRef: string | undefined;
     if (opts.outDir) {
       screenshotRef = await driver.screenshot(join(opts.outDir, 'screens', `step_${step}.png`));
@@ -84,6 +149,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       titleHint: guessTitle(tree),
     });
     launchNodeId ??= nodeId;
+    appPackage ??= pkg; // first in-app screen defines the target package
     visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
 
     if (pending) {
@@ -104,74 +170,93 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const interactables = collectInteractables(tree);
     for (const i of interactables) graph.noteInteractable(nodeId, i.selector);
 
-    // Among untried interactables on this screen, pick the highest-priority one:
-    // core flows > unseen destinations > known/visited dead-ends (policy.ts).
+    // Build scored candidates from untried interactables, pruning recurring
+    // buttons whose destination is already fully explored (the scanner trap).
     const untriedKeys = new Set(graph.untried(nodeId).map((s) => selectorKey(s)));
-    const candidates = interactables.filter((i) => untriedKeys.has(selectorKey(i.selector)));
-    let next: Interactable | undefined;
-    let bestScore = -Infinity;
-    for (const cand of candidates) {
+    const title = guessTitle(tree);
+    const candidates: Candidate[] = [];
+    for (const cand of interactables) {
+      if (!untriedKeys.has(selectorKey(cand.selector))) continue;
       const signature = signatureOf(cand.selector);
       const dest = destinationOf.get(signature);
-      // Prune: a recurring button (e.g. the top-bar scanner) whose destination
-      // we've already fully explored is dead weight on every other screen.
-      // Mark it handled and never tap it again — this is the core fix for the
-      // "barcode scanner reopened from every screen" problem.
       if (dest && dest !== nodeId && !graph.hasUntried(dest)) {
         graph.markTried(nodeId, cand.selector);
         continue;
       }
-      const score = scoreCandidate({
+      candidates.push({
+        index: candidates.length,
+        label: labelOf(cand.selector),
         hint: cand.hint,
-        signature,
-        yFraction: cand.center.y / screenHeight,
-        knownDestination: dest,
-        destinationVisits: dest ? (visitCount.get(dest) ?? 0) : 0,
-        onHome: nodeId === launchNodeId,
+        editable: cand.editable,
+        score: scoreCandidate({
+          hint: cand.hint,
+          signature,
+          yFraction: cand.center.y / screenHeight,
+          knownDestination: dest,
+          destinationVisits: dest ? (visitCount.get(dest) ?? 0) : 0,
+          onHome: nodeId === launchNodeId,
+        }),
+        selector: cand.selector,
+        center: cand.center,
       });
-      if (score > bestScore) {
-        bestScore = score;
-        next = cand;
-      }
     }
 
-    if (next) {
-      consecutiveBacks = 0;
-      graph.markTried(nodeId, next.selector);
-      if (next.editable) {
-        // Text field: focus, synthesize input, submit, then close the keyboard.
-        // Without this the explorer just re-taps the field and the soft
-        // keyboard (or IME tutorial dialog) traps it on one screen.
-        const value = synthesizeInput(next.hint);
-        log(`[${step}] ${nodeId} type ${JSON.stringify(value)} into ${JSON.stringify(next.selector)}`);
-        await driver.tap(next.center);
-        await driver.waitForIdle();
-        await driver.type(value);
-        await driver.pressEnter();
-        await driver.back(); // dismiss keyboard / IME overlay if still up
-        pending = {
-          fromId: nodeId,
-          action: { kind: 'type', selector: next.selector, point: next.center, inputValue: value },
-          signature: signatureOf(next.selector),
-        };
-      } else {
-        log(`[${step}] ${nodeId} tap ${JSON.stringify(next.selector)}`);
-        await driver.tap(next.center);
-        pending = {
-          fromId: nodeId,
-          action: { kind: 'tap', selector: next.selector, point: next.center },
-          signature: signatureOf(next.selector),
-        };
-      }
-    } else {
+    let decision = await decide({
+      goal: opts.goal,
+      screen: { title, routeHint, visits: visitCount.get(nodeId) ?? 1 },
+      candidates,
+      history: history.slice(-8),
+    });
+    // Validate decider output; fall back to a safe action.
+    if ((decision.act === 'tap' || decision.act === 'type') && !candidates[decision.index]) {
+      decision = candidates.length > 0 ? { act: 'tap', index: 0 } : { act: 'back' };
+    }
+
+    if (decision.act === 'stop') {
+      log(`[${step}] decider: stop${decision.reason ? ` — ${decision.reason}` : ''}`);
+      break;
+    }
+
+    if (decision.act === 'back') {
       consecutiveBacks += 1;
-      if (consecutiveBacks > maxBacks) {
+      if (candidates.length === 0 && consecutiveBacks > maxBacks) {
         log(`[${step}] exhausted after ${consecutiveBacks - 1} backs — stopping`);
         break;
       }
-      log(`[${step}] ${nodeId} exhausted — back`);
+      log(`[${step}] ${nodeId} back${decision.reason ? ` — ${decision.reason}` : ''}`);
       await driver.back();
       pending = { fromId: nodeId, action: { kind: 'back' } };
+      history.push(`${title ?? nodeId} → (back)`);
+    } else {
+      consecutiveBacks = 0;
+      const chosen = candidates[decision.index]!;
+      graph.markTried(nodeId, chosen.selector);
+      const signature = signatureOf(chosen.selector);
+      if (decision.act === 'type') {
+        // Text field: focus, synthesize/accept input, submit, dismiss keyboard.
+        const value = decision.value ?? synthesizeInput(chosen.hint);
+        log(`[${step}] ${nodeId} type ${JSON.stringify(value)} into "${chosen.label}"${decision.reason ? ` — ${decision.reason}` : ''}`);
+        await driver.tap(chosen.center);
+        await driver.waitForIdle();
+        await driver.type(value);
+        await driver.pressEnter();
+        await driver.back();
+        pending = {
+          fromId: nodeId,
+          action: { kind: 'type', selector: chosen.selector, point: chosen.center, inputValue: value },
+          signature,
+        };
+        history.push(`${title ?? nodeId} → type "${value}" in ${chosen.label}`);
+      } else {
+        log(`[${step}] ${nodeId} tap "${chosen.label}"${decision.reason ? ` — ${decision.reason}` : ''}`);
+        await driver.tap(chosen.center);
+        pending = {
+          fromId: nodeId,
+          action: { kind: 'tap', selector: chosen.selector, point: chosen.center },
+          signature,
+        };
+        history.push(`${title ?? nodeId} → tap ${chosen.label}`);
+      }
     }
     await driver.waitForIdle();
   }
