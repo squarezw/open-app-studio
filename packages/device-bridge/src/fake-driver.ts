@@ -51,6 +51,7 @@ export class FakeDriver implements DeviceDriver {
   }
   async swipe(): Promise<void> {}
   async type(): Promise<void> {}
+  async pressEnter(): Promise<void> {}
   async deepLink(): Promise<void> {}
   async routeHint(): Promise<string | undefined> {
     return this.app.routeHintOf?.(this.current) ?? `fake/.${capitalize(this.current)}Activity`;

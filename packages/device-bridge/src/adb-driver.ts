@@ -138,6 +138,10 @@ export class AdbDriver implements DeviceDriver {
     await this.run(['shell', 'input', 'text', text.replace(/ /g, '%s')]);
   }
 
+  async pressEnter(): Promise<void> {
+    await this.run(['shell', 'input', 'keyevent', '66']); // KEYCODE_ENTER
+  }
+
   async back(): Promise<void> {
     await this.run(['shell', 'input', 'keyevent', '4']);
   }
