@@ -63,8 +63,8 @@ export default function RunView({ id }: { id: string }) {
           if (g.type === 'edge' && g.edge) edgesRef.current.set(g.edge.id, g.edge);
           setGraph({ nodes: [...nodesRef.current.values()], edges: [...edgesRef.current.values()] });
         } else if (event.kind === 'status') {
-          const s = (event.data as { status: RunSummary['status'] }).status;
-          setRun((prev) => (prev ? { ...prev, status: s } : prev));
+          const { status, error: runError } = event.data as { status: RunSummary['status']; error?: string };
+          setRun((prev) => (prev ? { ...prev, status, error: runError } : prev));
           // The final IFG additionally carries annotations (roles) and flows.
           void fetchFullIfg();
         }
@@ -125,6 +125,7 @@ export default function RunView({ id }: { id: string }) {
             <b>{graph.frontier!.length}</b>
           </div>
         )}
+        {run?.status === 'error' && run.error && <p className="run-error">{run.error}</p>}
         {run?.status === 'done' && graph.nodes.length > 0 && (
           <button className="primary promote" onClick={promote} disabled={promoting}>
             {promoting ? 'Promoting…' : '🧱 Promote to Blueprint'}

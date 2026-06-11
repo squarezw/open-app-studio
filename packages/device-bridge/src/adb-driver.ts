@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Point, UiNode } from '@oas/flow-graph';
 import { parseUiautomatorXml } from './parse-uiautomator.js';
@@ -16,6 +17,18 @@ export interface AdbDriverOptions {
   settleMs?: number;
 }
 
+/** Explicit option → OAS_ADB_PATH → $ANDROID_HOME/platform-tools/adb → "adb" on PATH. */
+function resolveAdbPath(explicit?: string): string {
+  if (explicit) return explicit;
+  if (process.env.OAS_ADB_PATH) return process.env.OAS_ADB_PATH;
+  const sdkHome = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
+  if (sdkHome) {
+    const candidate = join(sdkHome, 'platform-tools', 'adb');
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'adb';
+}
+
 /** Android driver over plain adb — no on-device agent required. */
 export class AdbDriver implements DeviceDriver {
   private readonly adb: string;
@@ -23,20 +36,48 @@ export class AdbDriver implements DeviceDriver {
   private readonly settleMs: number;
 
   constructor(opts: AdbDriverOptions = {}) {
-    this.adb = opts.adbPath ?? 'adb';
+    this.adb = resolveAdbPath(opts.adbPath);
     this.baseArgs = opts.serial ? ['-s', opts.serial] : [];
     this.settleMs = opts.settleMs ?? 1000;
   }
 
   private async run(args: string[], opts: { binary?: boolean } = {}): Promise<Buffer> {
-    const { stdout } = await execFileAsync(this.adb, [...this.baseArgs, ...args], {
-      encoding: opts.binary ? ('buffer' as const) : ('buffer' as const),
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
+    try {
+      const { stdout } = await execFileAsync(this.adb, [...this.baseArgs, ...args], {
+        encoding: 'buffer' as const,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      return Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
+    } catch (err) {
+      if ((err as { code?: string }).code === 'ENOENT') {
+        throw new Error(
+          `adb not found at "${this.adb}" — set ANDROID_HOME (or OAS_ADB_PATH) in .env, or add platform-tools to PATH`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  /** Fails fast with actionable messages before exploration starts. */
+  async preflight(appId: string): Promise<void> {
+    const state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
+    if (state !== 'device') {
+      throw new Error(
+        'No Android device/emulator connected (adb get-state). Start one, e.g.: emulator -avd oas-test',
+      );
+    }
+    const packages = (await this.run(['shell', 'pm', 'list', 'packages', appId])).toString('utf8');
+    const installed = packages.split('\n').some((l) => l.trim() === `package:${appId}`);
+    if (!installed) {
+      throw new Error(
+        `${appId} is not installed on the device. OAS explores INSTALLED apps — it does not download from app stores. ` +
+          `Install it first (adb install <file.apk>), then start the run again.`,
+      );
+    }
   }
 
   async launch(appId: string): Promise<void> {
+    await this.preflight(appId);
     // `monkey -p <pkg> 1` is the classic launcher but exits non-zero on recent
     // emulator images (SYS_KEYS warning → exit 251). Resolve the launcher
     // activity and `am start` it instead; fall back to monkey for packages
