@@ -202,32 +202,44 @@ describe('text input handling', () => {
     expect(synthesizeInput('some other field')).toBe('test');
   });
 
-  it('fills ALL fields of a multi-field form before submitting (no per-field back)', async () => {
-    const field = (id: string, desc: string, y: number): UiNode => ({
-      className: 'android.widget.EditText', resourceId: id, contentDesc: desc, clickable: true, enabled: true,
-      bounds: { x: 0, y, w: 1080, h: 110 }, children: [],
-    });
-    const form: UiNode = {
+  it('fills every text field, skips dropdowns, dedups by typed value (no per-field back)', async () => {
+    // A stateful form mirroring iHerb: ALL fields share one resourceId, the
+    // label lives in `text`, dropdowns are focusable:false, and typing updates
+    // the field's visible text (so dedup-by-current-text works like a real device).
+    const labels = [
+      { label: 'United States', focusable: false }, // Country dropdown — must be skipped
+      { label: 'Full Name *', focusable: true },
+      { label: 'Address Line 1 *', focusable: true },
+      { label: 'State / Region *', focusable: false }, // State dropdown — skipped
+      { label: 'Zip / Postal Code *', focusable: true },
+    ];
+    const values = labels.map((l) => l.label); // mutated as we "type"
+    const typed: string[] = [];
+    let backs = 0;
+    const buildTree = (): UiNode => ({
       className: 'screen.address_form',
       bounds: { x: 0, y: 0, w: 1080, h: 2400 },
-      children: [
-        field('com.x:id/name', 'Full Name', 200),
-        field('com.x:id/addr', 'Address Line 1', 340),
-        field('com.x:id/zip', 'Zip / Postal Code', 480),
-        { className: 'android.widget.Button', resourceId: 'com.x:id/continue', text: 'Continue', clickable: true, enabled: true, bounds: { x: 0, y: 2200, w: 1080, h: 150 }, children: [] },
-      ],
-    };
-    const typed: Array<{ value: string }> = [];
-    let backs = 0;
-    let dismisses = 0;
+      children: labels.map((l, i) => ({
+        className: 'android.widget.EditText',
+        resourceId: 'com.x:id/input_edit_text', // shared id, like iHerb
+        text: values[i],
+        focusable: l.focusable,
+        clickable: true,
+        enabled: true,
+        bounds: { x: 0, y: 200 + i * 160, w: 1080, h: 120 },
+        children: [],
+      })),
+    });
+    let focused = -1;
     const driver: DeviceDriver = {
       async launch() {},
-      async uiTree() { return form; },
-      async tap() {},
-      async type(t: string) { typed.push({ value: t }); },
-      async pressEnter() {},
+      async uiTree() { return buildTree(); },
+      async tap(p) { focused = Math.round((p.y - 260) / 160); },
+      async type(t: string) { typed.push(t); if (focused >= 0) values[focused] = t; },
       async clearText() {},
-      async dismissKeyboard() { dismisses += 1; },
+      async pressEnter() {},
+      async isKeyboardShown() { return true; },
+      async dismissKeyboard() {},
       async back() { backs += 1; },
       async swipe() {}, async deepLink() {},
       async screenshot(p: string) { return p; },
@@ -235,11 +247,10 @@ describe('text input handling', () => {
       async waitForIdle() {},
     };
 
-    await explore(driver, { appId: 'com.x', maxActions: 2 });
-    // all three fields filled by their own hint, in one form-fill step
-    expect(typed.map((t) => t.value)).toEqual(['Test User', '123 Main St', '10001']);
-    // keyboard closed via dismissKeyboard (safe), NEVER raw back — so no leave dialog
-    expect(dismisses).toBeGreaterThanOrEqual(1);
+    await explore(driver, { appId: 'com.x', maxActions: 1 });
+    // The 3 focusable text fields get filled by their label; the 2 dropdowns are skipped.
+    expect(typed).toEqual(['Test User', '123 Main St', '10001']);
+    // the fill itself never presses a raw back — so no "discard changes?" dialog
     expect(backs).toBe(0);
   });
 
@@ -270,7 +281,7 @@ describe('text input handling', () => {
         // "Leave" button is the one at y~670
         if (onDialog && p.y > 600 && p.y < 740) { tappedLeave = true; onDialog = false; }
       },
-      async type() {}, async clearText() {}, async pressEnter() {}, async dismissKeyboard() {},
+      async type() {}, async clearText() {}, async pressEnter() {}, async isKeyboardShown() { return true; }, async dismissKeyboard() {},
       async back() { /* modal swallows back: no state change */ },
       async swipe() {}, async deepLink() {},
       async screenshot(p: string) { return p; },
@@ -320,6 +331,7 @@ describe('text input handling', () => {
         calls.push('enter');
         submitted = true; // search submitted → next screen is results
       },
+      async isKeyboardShown() { return true; },
       async dismissKeyboard() {
         calls.push('dismiss');
       },
@@ -390,6 +402,7 @@ describe('prioritization & revisit suppression', () => {
     async type() {}
     async clearText() {}
     async pressEnter() {}
+    async isKeyboardShown() { return true; }
     async dismissKeyboard() {}
     async deepLink() {}
     async routeHint() { return `com.x/.${this.current}`; }

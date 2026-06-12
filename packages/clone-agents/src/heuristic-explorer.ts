@@ -45,8 +45,10 @@ interface Interactable {
   center: { x: number; y: number };
   /** A text field we should type into rather than just tap. */
   editable: boolean;
-  /** Hint for input synthesis (resource id + content-desc + class, lowercased). */
+  /** Hint for input synthesis (resource id + content-desc + text + class, lowercased). */
   hint: string;
+  /** Current visible text/value of the element (the label when empty). */
+  text?: string;
 }
 
 /** A scored, pickable element on the current screen (passed to a Decider). */
@@ -189,43 +191,47 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const untriedKeys = new Set(graph.untried(nodeId).map((s) => selectorKey(s)));
     const title = guessTitle(tree);
 
-    // Forms first (deterministic, ahead of the decider): a screen with a
-    // multi-field form and unfilled fields gets every field filled by its own
-    // hint before anything taps a submit button — otherwise validation fails
-    // on empties and backing out pops a "discard changes?" dialog (the trap the
-    // explorer got stuck in on iHerb's address form). One keyboard-dismiss back
-    // at the end (the IME is open after the last type, so it closes the
-    // keyboard rather than navigating away).
+    // Forms first (deterministic, ahead of the decider): a multi-field form
+    // gets every text field filled before anything taps submit — otherwise
+    // validation fails on empties and backing out pops a "discard changes?"
+    // dialog (the iHerb address-form trap).
+    //
+    // Real-world quirks handled (learned from iHerb): dropdowns render as
+    // non-focusable EditText → excluded by isEditable; every field can share
+    // one resourceId → dedup by the field's CURRENT TEXT (a filled field shows
+    // our typed value), not by selector; fields below the fold are reached by
+    // scrolling. We NEVER press a bare back() here — only dismissKeyboard
+    // (safe), so the form is never accidentally navigated away.
     const untriedEditable = editableFields.filter((f) => untriedKeys.has(selectorKey(f.selector)));
     if (editableFields.length >= 2 && untriedEditable.length > 0) {
       const first = editableFields[0]!;
-      // Long forms have fields below the fold (e.g. the phone number at the
-      // bottom). Fill every visible field, scroll down, fill newly-revealed
-      // ones, repeat — then dismiss the keyboard SAFELY (only if shown, so it
-      // never navigates and pops a "discard changes?" dialog).
-      const filledSigs = new Set<string>();
+      const typedValues = new Set<string>();
       let totalFilled = 0;
       for (let pass = 0; pass < 5; pass++) {
-        const passTree = pass === 0 ? tree : await driver.uiTree();
-        const fields = collectInteractables(passTree).filter((i) => i.editable);
-        const fresh = fields.filter((f) => !filledSigs.has(signatureOf(f.selector)));
+        const fields = (pass === 0 ? interactables : collectInteractables(await driver.uiTree())).filter(
+          (i) => i.editable,
+        );
+        // Unfilled = current text isn't a value we've already typed.
+        const fresh = fields.filter((f) => !(f.text && typedValues.has(f.text)));
+        if (fresh.length === 0) break;
         for (const f of fresh) {
+          graph.markTried(nodeId, f.selector);
+          const value = synthesizeInput(f.hint);
+          await driver.dismissKeyboard(); // clean layout before tapping next field (safe)
           await driver.tap(f.center);
           await driver.waitForIdle();
-          await driver.clearText(); // avoid "testtest" if a field is re-typed
-          await driver.type(synthesizeInput(f.hint));
-          await driver.dismissKeyboard();
-          filledSigs.add(signatureOf(f.selector));
-          graph.markTried(nodeId, f.selector);
+          await driver.clearText();
+          await driver.type(value);
+          typedValues.add(value);
           totalFilled += 1;
         }
-        if (fresh.length === 0) break;
-        const h = passTree.bounds?.h ?? 2400;
-        const w = passTree.bounds?.w ?? 1080;
+        await driver.dismissKeyboard();
+        const h = tree.bounds?.h ?? 2400;
+        const w = tree.bounds?.w ?? 1080;
         await driver.swipe({ x: w / 2, y: h * 0.72 }, { x: w / 2, y: h * 0.3 }, 400);
         await driver.waitForIdle();
       }
-      log(`[${step}] ${nodeId} filled ${totalFilled} form fields (scroll-fill)`);
+      log(`[${step}] ${nodeId} filled ${totalFilled} text field(s)`);
       pending = {
         fromId: nodeId,
         action: { kind: 'type', selector: first.selector, point: first.center, inputValue: '(form)' },
@@ -357,7 +363,11 @@ export function collectInteractables(root: UiNode): Interactable[] {
         selector: toSelector(node, path),
         center: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
         editable,
-        hint: `${node.resourceId ?? ''} ${node.contentDesc ?? ''} ${node.className}`.toLowerCase(),
+        // Include the visible text/label: many apps reuse one resourceId for
+        // every field, so the label is the only thing that tells them apart
+        // (and lets synthesizeInput match "Full Name" → a name).
+        hint: `${node.resourceId ?? ''} ${node.contentDesc ?? ''} ${node.text ?? ''} ${node.className}`.toLowerCase(),
+        text: node.text,
       });
     }
     node.children.forEach((c, i) => walk(c, [...path, i]));
@@ -372,12 +382,13 @@ export function collectInteractables(root: UiNode): Interactable[] {
 }
 
 /**
- * True text-entry widgets only — EditText / SearchView / AutoComplete. A
- * clickable View that merely *opens* a search screen is left as a normal tap
- * (it navigates forward); the real input box on the next screen is what we type
- * into.
+ * True text-entry widgets only — EditText / SearchView / AutoComplete that are
+ * `focusable`. Apps often render dropdowns (Country/State) as a non-focusable
+ * EditText that opens a picker on tap; those are NOT typeable, so they're left
+ * as normal tap candidates (`focusable=false` → excluded here).
  */
 function isEditable(node: UiNode): boolean {
+  if (node.focusable === false) return false;
   const cls = node.className.toLowerCase();
   return cls.includes('edittext') || cls.includes('searchview') || cls.includes('autocomplete');
 }

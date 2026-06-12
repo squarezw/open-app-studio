@@ -18,6 +18,8 @@ export interface DeviceDriver {
   clearText(): Promise<void>;
   /** Submit the focused input (IME action / Enter), e.g. to run a search. */
   pressEnter(): Promise<void>;
+  /** Whether the soft keyboard is currently shown (a tapped field accepts text). */
+  isKeyboardShown(): Promise<boolean>;
   /** Close the soft keyboard IF it is open — must NOT navigate when it's already closed. */
   dismissKeyboard(): Promise<void>;
   back(): Promise<void>;

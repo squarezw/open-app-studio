@@ -53,6 +53,9 @@ export class FakeDriver implements DeviceDriver {
   async type(): Promise<void> {}
   async clearText(): Promise<void> {}
   async pressEnter(): Promise<void> {}
+  async isKeyboardShown(): Promise<boolean> {
+    return true; // the fake world shows a keyboard for text fields
+  }
   async dismissKeyboard(): Promise<void> {}
   async deepLink(): Promise<void> {}
   async routeHint(): Promise<string | undefined> {
