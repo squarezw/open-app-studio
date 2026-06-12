@@ -1,6 +1,7 @@
 'use client';
 
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { GATEWAY_URL } from '../lib/gateway';
 
 interface ScreenData {
   title: string;
@@ -11,11 +12,12 @@ interface ScreenData {
 
 export default function ScreenNodeCard({ data }: NodeProps) {
   const d = data as unknown as ScreenData;
+  const src = d.screenshotUrl?.startsWith('/api/') ? `${GATEWAY_URL}${d.screenshotUrl}` : d.screenshotUrl;
   return (
     <div className="screen-node" data-role={d.role ?? 'other'}>
-      {d.screenshotUrl && (
+      {src && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={d.screenshotUrl} alt={d.title} />
+        <img src={src} alt={d.title} />
       )}
       <div className="title">{d.title}</div>
       <div className="meta">
