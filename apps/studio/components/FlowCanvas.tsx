@@ -1,7 +1,15 @@
 'use client';
 
-import { useMemo } from 'react';
-import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from '@xyflow/react';
+import { useEffect, useMemo, useRef } from 'react';
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type ReactFlowInstance,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ifgToFlow, type PartialIfg } from '../lib/ifg-to-flow';
 import ScreenNodeCard from './ScreenNodeCard';
@@ -15,6 +23,8 @@ export default function FlowCanvas({
   graph: PartialIfg;
   highlight?: Set<string>;
 }) {
+  const instance = useRef<ReactFlowInstance | null>(null);
+
   const { nodes, edges } = useMemo(() => {
     const flow = ifgToFlow(graph);
     const rfNodes: Node[] = flow.nodes;
@@ -37,6 +47,15 @@ export default function FlowCanvas({
     return { nodes: rfNodes, edges: rfEdges };
   }, [graph, highlight]);
 
+  // Re-fit when the node count changes. A finished run loads all nodes in one
+  // batch AFTER mount, so the initial `fitView` (which ran on an empty graph)
+  // would otherwise leave them positioned outside the viewport — a blank canvas.
+  useEffect(() => {
+    if (instance.current && nodes.length > 0) {
+      instance.current.fitView({ padding: 0.2, duration: 200 });
+    }
+  }, [nodes.length]);
+
   return (
     <ReactFlow
       nodes={nodes}
@@ -44,6 +63,10 @@ export default function FlowCanvas({
       nodeTypes={nodeTypes}
       colorMode="dark"
       fitView
+      onInit={(inst) => {
+        instance.current = inst;
+        inst.fitView({ padding: 0.2 });
+      }}
       nodesDraggable
       nodesConnectable={false}
       style={{ background: 'var(--bg)' }}
