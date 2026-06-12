@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { DeviceDriver } from '@oas/device-bridge';
 import {
+  fingerprint,
   GraphBuilder,
   selectorKey,
   type Action,
@@ -11,6 +12,8 @@ import {
   type UiNode,
 } from '@oas/flow-graph';
 import { scoreCandidate, signatureOf } from './policy.js';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * M0 spike: a deterministic, LLM-free Explorer. It walks the app breadth-first
@@ -45,6 +48,8 @@ interface Interactable {
   center: { x: number; y: number };
   /** A text field we should type into rather than just tap. */
   editable: boolean;
+  /** A select/dropdown that opens a picker on tap (non-focusable EditText / Spinner). */
+  dropdown: boolean;
   /** Hint for input synthesis (resource id + content-desc + text + class, lowercased). */
   hint: string;
   /** Current visible text/value of the element (the label when empty). */
@@ -232,12 +237,32 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         await driver.waitForIdle();
       }
       log(`[${step}] ${nodeId} filled ${totalFilled} text field(s)`);
+
+      // Dropdowns (Country / State): tap to open the picker, wait for it to
+      // load (often a network request), pick the first real option, return.
+      const dropdowns = collectInteractables(await driver.uiTree()).filter((i) => i.dropdown);
+      let pickedCount = 0;
+      for (const dd of dropdowns) {
+        await driver.dismissKeyboard();
+        await driver.tap(dd.center);
+        await waitForStableTree(() => driver.uiTree(), { maxMs: 6000 });
+        const option = pickFirstOption(await driver.uiTree());
+        if (option) {
+          await driver.tap(option);
+          await waitForStableTree(() => driver.uiTree(), { maxMs: 4000 });
+          pickedCount += 1;
+        } else {
+          await driver.dismissKeyboard(); // nothing pickable; leave the picker
+        }
+      }
+      if (pickedCount > 0) log(`[${step}] ${nodeId} selected ${pickedCount} dropdown(s)`);
+
       pending = {
         fromId: nodeId,
         action: { kind: 'type', selector: first.selector, point: first.center, inputValue: '(form)' },
         signature: signatureOf(first.selector),
       };
-      history.push(`${title ?? nodeId} → fill form (${totalFilled} fields)`);
+      history.push(`${title ?? nodeId} → fill form (${totalFilled} fields, ${pickedCount} dropdowns)`);
       consecutiveBacks = 0;
       await driver.waitForIdle();
       continue;
@@ -358,11 +383,13 @@ export function collectInteractables(root: UiNode): Interactable[] {
   function walk(node: UiNode, path: number[]): void {
     const b = node.bounds;
     const editable = isEditable(node);
+    const dropdown = isDropdown(node);
     if ((node.clickable || editable) && node.enabled !== false && b && b.w > 0 && b.h > 0) {
       out.push({
         selector: toSelector(node, path),
         center: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
         editable,
+        dropdown,
         // Include the visible text/label: many apps reuse one resourceId for
         // every field, so the label is the only thing that tells them apart
         // (and lets synthesizeInput match "Full Name" → a name).
@@ -391,6 +418,61 @@ function isEditable(node: UiNode): boolean {
   if (node.focusable === false) return false;
   const cls = node.className.toLowerCase();
   return cls.includes('edittext') || cls.includes('searchview') || cls.includes('autocomplete');
+}
+
+/**
+ * A select/dropdown: a Spinner, or a field-like widget that opens a picker on
+ * tap rather than accepting text (iHerb renders Country/State as a
+ * non-focusable EditText). Tapping it should pick an option, not type.
+ */
+function isDropdown(node: UiNode): boolean {
+  const cls = node.className.toLowerCase();
+  if (cls.includes('spinner')) return true;
+  return node.focusable === false && (cls.includes('edittext') || cls.includes('autocomplete'));
+}
+
+/**
+ * Pick the best option on an open picker/list: a clickable leaf with real text,
+ * skipping search boxes, headers and dismiss controls. Returns its tap point.
+ */
+export function pickFirstOption(root: UiNode): { x: number; y: number } | undefined {
+  const screenH = root.bounds?.h ?? 2400;
+  const opts: Array<{ x: number; y: number; text: string }> = [];
+  const walk = (n: UiNode): void => {
+    const b = n.bounds;
+    const text = (n.text ?? n.contentDesc ?? '').trim();
+    const isLeaf = n.children.length === 0;
+    if (n.clickable && isLeaf && b && b.w > 0 && b.h > 0 && text.length >= 2 && text.length <= 40) {
+      if (!/\b(cancel|close|done|back|search|select|clear|ok)\b|^[x✕✖]$/i.test(text)) {
+        opts.push({ x: b.x + b.w / 2, y: b.y + b.h / 2, text });
+      }
+    }
+    n.children.forEach(walk);
+  };
+  walk(root);
+  // Skip the very top (likely a title/search bar); take the first real option.
+  const pick = opts.find((o) => o.y > screenH * 0.12) ?? opts[0];
+  return pick ? { x: pick.x, y: pick.y } : undefined;
+}
+
+/** Poll the UI tree until its structure stops changing (or timeout) — for network-loaded pickers. */
+async function waitForStableTree(
+  getTree: () => Promise<UiNode>,
+  opts: { settleMs?: number; maxMs?: number } = {},
+): Promise<UiNode> {
+  const settleMs = opts.settleMs ?? 500;
+  const maxMs = opts.maxMs ?? 5000;
+  const start = Date.now();
+  let prev = '';
+  let tree = await getTree();
+  while (Date.now() - start < maxMs) {
+    const fp = fingerprint(tree);
+    if (fp === prev) return tree;
+    prev = fp;
+    await sleep(settleMs);
+    tree = await getTree();
+  }
+  return tree;
 }
 
 /** Synthesize a plausible value for a field from its hint (design: realistic inputs, never real creds). */

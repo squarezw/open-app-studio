@@ -1,4 +1,11 @@
-export { explore, collectInteractables, guessTitle, synthesizeInput, heuristicDecide } from './heuristic-explorer.js';
+export {
+  explore,
+  collectInteractables,
+  guessTitle,
+  synthesizeInput,
+  heuristicDecide,
+  pickFirstOption,
+} from './heuristic-explorer.js';
 export type { ExploreOptions, Candidate, Decision, Decider, DecisionContext } from './heuristic-explorer.js';
 export { domainPriority, scoreCandidate, signatureOf } from './policy.js';
 export { makeLlmDecider } from './llm-explorer.js';
