@@ -25,12 +25,19 @@ import type { Selector } from '@oas/flow-graph';
 const CORE = /(?<![a-z])(cart|bag|checkout|buy|pay|order|product|item|categor|browse|explore|shop|store|search|sign\s?up|signup|register|create\s?account|log\s?in|login|sign\s?in|signin|continue|next|address|subscrib|deal|sale|wishlist|favorit|home)/i;
 
 // Utility / dead-end surfaces — useful to know exist, costly to dwell in.
-const UTILITY = /(?<![a-z])(scan|barcode|qr|camera|flash|share|refer|invite|notif|setting|language|region|country|help|feedback|rate\s?us|follow|social|about|terms|privacy|legal|version|theme)/i;
+// (`survey/rate/newsletter` are the "engage" buttons on promo interstitials.)
+const UTILITY = /(?<![a-z])(scan|barcode|qr|camera|flash|share|refer|invite|notif|setting|language|region|country|help|feedback|survey|rate\s?us|rate\s?this|review\s?us|newsletter|follow|social|about|terms|privacy|legal|version|theme)/i;
 
-// Dismissers — the explorer exits via back(); avoid thrashing these.
-const DISMISS = /(?<![a-z])(close|cancel|dismiss|skip|not\s?now|maybe\s?later)/i;
+// Promo-dismiss affordances — the clean way OUT of an interstitial (survey,
+// rate-us, newsletter, "get the app"). Prefer these so a promo overlay is
+// closed and exploration returns to the real content underneath.
+const PROMO_DISMISS = /(?<![a-z])(don'?t\s?show\s?again|no\s?,?\s?thanks|no\s?thank\s?you|maybe\s?later|not\s?now|remind\s?me\s?later|skip|got\s?it|dismiss)/i;
+
+// Generic close/cancel — ambiguous; let back() or other candidates lead.
+const DISMISS = /(?<![a-z])(close|cancel)/i;
 
 export function domainPriority(hint: string): number {
+  if (PROMO_DISMISS.test(hint)) return 2;
   if (UTILITY.test(hint)) return -3;
   if (DISMISS.test(hint)) return -2;
   if (CORE.test(hint)) return 3;

@@ -9,14 +9,25 @@ describe('domainPriority', () => {
     expect(domainPriority('category list')).toBe(3);
   });
 
-  it('penalizes utility / dead-end surfaces', () => {
+  it('penalizes utility / dead-end surfaces incl. promo engagement', () => {
     expect(domainPriority('iCLTopBarScanner barcode')).toBe(-3);
     expect(domainPriority('share and earn')).toBe(-3);
     expect(domainPriority('notifications')).toBe(-3);
     expect(domainPriority('settings')).toBe(-3);
+    expect(domainPriority('Take a quick survey')).toBe(-3);
+    expect(domainPriority('Rate us')).toBe(-3);
   });
 
-  it('penalizes dismissers and stays neutral otherwise', () => {
+  it('prefers promo-dismiss affordances (close the interstitial, keep exploring)', () => {
+    expect(domainPriority("Don't show again")).toBe(2);
+    expect(domainPriority('No thanks')).toBe(2);
+    expect(domainPriority('Not now')).toBe(2);
+    expect(domainPriority('Skip')).toBe(2);
+    // a promo-dismiss beats engaging the survey
+    expect(domainPriority("Don't show again")).toBeGreaterThan(domainPriority('Take a quick survey'));
+  });
+
+  it('penalizes generic close/cancel and stays neutral otherwise', () => {
     expect(domainPriority('cancel')).toBe(-2);
     expect(domainPriority('some random label')).toBe(0);
   });
