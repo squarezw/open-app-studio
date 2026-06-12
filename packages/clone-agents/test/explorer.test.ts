@@ -170,6 +170,64 @@ describe('heuristic explorer (integration, fake device)', () => {
   });
 });
 
+describe('bounded scrolling', () => {
+  const scrollList = (root: UiNode, children: UiNode[]): UiNode => ({
+    className: 'screen.page',
+    bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+    children: [{ className: 'androidx.recyclerview.widget.RecyclerView', scrollable: true, bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children, ...root }],
+  });
+  const leaf = (id: string, y: number): UiNode => ({
+    className: 'android.widget.Button', resourceId: id, text: id, clickable: true, enabled: true,
+    bounds: { x: 0, y, w: 1080, h: 120 }, children: [],
+  });
+
+  const terminal: UiNode = { className: 'screen.done', bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children: [] };
+
+  function makeDriver(pageFor: (scrollPos: number) => UiNode) {
+    let pos = 0;
+    let left = false;
+    const swipes: number[] = [];
+    const driver: DeviceDriver = {
+      async launch() { pos = 0; left = false; },
+      async uiTree() { return left ? terminal : pageFor(pos); },
+      async tap() {},
+      async swipe() { swipes.push(pos); pos += 1; },
+      async type() {}, async clearText() {}, async pressEnter() {},
+      async isKeyboardShown() { return false; }, async dismissKeyboard() {},
+      async back() { left = true; }, // back leaves the page (realistic)
+      async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return undefined; },
+      async waitForIdle() {},
+    };
+    return { driver, swipes: () => swipes };
+  }
+
+  it('scrolls a long page through its distinct sections, then stops at the bottom', async () => {
+    // 3 distinct sections (pos 0,1,2); pos>=2 keeps returning the last section
+    // = bottom reached (structure stops changing → scrollExhausted).
+    const { driver, swipes } = makeDriver((pos) => {
+      const p = Math.min(pos, 2);
+      return scrollList({}, [leaf(`sec${p}_a`, 200), leaf(`sec${p}_b`, 400)]);
+    });
+    await explore(driver, { appId: 'com.x', maxActions: 30 });
+    // scrolled through ~3 sections then stopped — never runs away
+    expect(swipes().length).toBeGreaterThanOrEqual(2);
+    expect(swipes().length).toBeLessThanOrEqual(4);
+  });
+
+  it('stops scrolling an infinite feed after one no-op scroll (stable fingerprint)', async () => {
+    // Structure is identical at every scroll position (an infinite feed):
+    // content-invariant fingerprint never changes → scroll reveals "nothing
+    // new" → marked exhausted → at most one scroll attempt.
+    const { driver, swipes } = makeDriver(() =>
+      scrollList({}, [leaf('feed_row', 200), leaf('feed_row', 400)]),
+    );
+    await explore(driver, { appId: 'com.x', maxActions: 30 });
+    expect(swipes().length).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('text input handling', () => {
   it('detects EditText and search fields as editable', () => {
     const screen: UiNode = {
