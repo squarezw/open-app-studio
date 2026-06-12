@@ -100,6 +100,7 @@ class FakeDriver implements DeviceDriver {
   async swipe(): Promise<void> {}
   async type(): Promise<void> {}
   async pressEnter(): Promise<void> {}
+  async clearText(): Promise<void> {}
   async dismissKeyboard(): Promise<void> {}
   async deepLink(): Promise<void> {}
   async routeHint(): Promise<string | undefined> {
@@ -225,6 +226,7 @@ describe('text input handling', () => {
       async tap() {},
       async type(t: string) { typed.push({ value: t }); },
       async pressEnter() {},
+      async clearText() {},
       async dismissKeyboard() { dismisses += 1; },
       async back() { backs += 1; },
       async swipe() {}, async deepLink() {},
@@ -268,7 +270,7 @@ describe('text input handling', () => {
         // "Leave" button is the one at y~670
         if (onDialog && p.y > 600 && p.y < 740) { tappedLeave = true; onDialog = false; }
       },
-      async type() {}, async pressEnter() {}, async dismissKeyboard() {},
+      async type() {}, async clearText() {}, async pressEnter() {}, async dismissKeyboard() {},
       async back() { /* modal swallows back: no state change */ },
       async swipe() {}, async deepLink() {},
       async screenshot(p: string) { return p; },
@@ -313,6 +315,7 @@ describe('text input handling', () => {
       async type(t: string) {
         calls.push(`type:${t}`);
       },
+      async clearText() {},
       async pressEnter() {
         calls.push('enter');
         submitted = true; // search submitted → next screen is results
@@ -385,6 +388,7 @@ describe('prioritization & revisit suppression', () => {
     async screenshot(o: string) { return o; }
     async swipe() {}
     async type() {}
+    async clearText() {}
     async pressEnter() {}
     async dismissKeyboard() {}
     async deepLink() {}

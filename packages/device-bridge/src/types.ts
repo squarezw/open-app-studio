@@ -14,6 +14,8 @@ export interface DeviceDriver {
   tap(point: Point): Promise<void>;
   swipe(from: Point, to: Point, durationMs?: number): Promise<void>;
   type(text: string): Promise<void>;
+  /** Clear the focused text field (so typing replaces rather than appends). */
+  clearText(): Promise<void>;
   /** Submit the focused input (IME action / Enter), e.g. to run a search. */
   pressEnter(): Promise<void>;
   /** Close the soft keyboard IF it is open — must NOT navigate when it's already closed. */

@@ -221,6 +221,14 @@ export class AdbDriver implements DeviceDriver {
     await this.run(['shell', 'input', 'text', text.replace(/ /g, '%s')]);
   }
 
+  async clearText(): Promise<void> {
+    // `input text` APPENDS — without clearing, re-typing a field yields
+    // "testtest". Move to end, then send a batch of DELs to wipe existing text.
+    await this.run(['shell', 'input', 'keyevent', '123']); // KEYCODE_MOVE_END
+    const dels = Array.from({ length: 60 }, () => '67'); // KEYCODE_DEL ×60
+    await this.run(['shell', 'input', 'keyevent', ...dels]);
+  }
+
   async pressEnter(): Promise<void> {
     await this.run(['shell', 'input', 'keyevent', '66']); // KEYCODE_ENTER
   }

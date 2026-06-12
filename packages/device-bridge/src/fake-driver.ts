@@ -51,6 +51,7 @@ export class FakeDriver implements DeviceDriver {
   }
   async swipe(): Promise<void> {}
   async type(): Promise<void> {}
+  async clearText(): Promise<void> {}
   async pressEnter(): Promise<void> {}
   async dismissKeyboard(): Promise<void> {}
   async deepLink(): Promise<void> {}
