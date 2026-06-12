@@ -12,7 +12,18 @@
 
 ## 当前状态
 
-🚧 **设计阶段。** 架构与 v1 范围已在文档中完整定义，欢迎参与讨论与贡献。
+🚧 **开发中。** App 克隆引擎（链接 → 实时探索 → 交互流图谱 → 可编辑蓝图 → Expo 代码生成）与 Studio 画布已端到端打通。详见[路线图](./docs/roadmap.md)。
+
+## 快速开始
+
+```bash
+pnpm install
+pnpm dev          # 构建全部，然后同时启动 gateway (:4400) + studio (:3100)；Ctrl+C 一起关闭
+```
+
+打开 **http://localhost:3100**，点 **▶ Clone**（输入框留空 = 假设备演示，无需模拟器）。
+
+克隆真实安卓应用：先让模拟器运行并装好目标应用（`adb install app.apk`），驱动选 **adb**，并在 `.env` 里配好 `ANDROID_HOME` / `OAS_LLM_API_KEY`（参见 [`.env.example`](./.env.example)）。端口可用 `GATEWAY_PORT` / `STUDIO_PORT` 覆盖。
 
 ## 为什么做这个
 
