@@ -16,6 +16,8 @@ export interface DeviceDriver {
   type(text: string): Promise<void>;
   /** Submit the focused input (IME action / Enter), e.g. to run a search. */
   pressEnter(): Promise<void>;
+  /** Close the soft keyboard IF it is open — must NOT navigate when it's already closed. */
+  dismissKeyboard(): Promise<void>;
   back(): Promise<void>;
   deepLink(url: string): Promise<void>;
   /** Platform route hint for the current screen (activity name, etc.). */

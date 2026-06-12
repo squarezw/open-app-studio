@@ -225,6 +225,16 @@ export class AdbDriver implements DeviceDriver {
     await this.run(['shell', 'input', 'keyevent', '66']); // KEYCODE_ENTER
   }
 
+  async dismissKeyboard(): Promise<void> {
+    // Only back when the IME is actually shown — otherwise back() navigates and
+    // can pop a "discard changes?" dialog (the address-form trap).
+    const ime = (await this.run(['shell', 'dumpsys', 'input_method']).catch(() => Buffer.from('')))
+      .toString('utf8');
+    if (/mInputShown=true/.test(ime)) {
+      await this.run(['shell', 'input', 'keyevent', '4']); // KEYCODE_BACK closes the keyboard
+    }
+  }
+
   async back(): Promise<void> {
     await this.run(['shell', 'input', 'keyevent', '4']);
   }
