@@ -109,6 +109,8 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   let launchNodeId: string | undefined;
   let appPackage: string | undefined;
   let consecutiveRelaunches = 0;
+  let lastObservedNodeId: string | undefined;
+  let sameNodeStreak = 0;
   const history: string[] = [];
   // Cross-screen learning: which node a recurring button leads to, and how
   // often we've landed on each node — so we stop re-opening known dead-ends.
@@ -152,6 +154,12 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     appPackage ??= pkg; // first in-app screen defines the target package
     visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
 
+    // A `back` that left us on the same screen is a modal eating the gesture
+    // (e.g. a "discard changes?" dialog). Don't keep backing into it.
+    const backWasNoOp = pending?.action.kind === 'back' && pending.fromId === nodeId;
+    sameNodeStreak = nodeId === lastObservedNodeId ? sameNodeStreak + 1 : 0;
+    lastObservedNodeId = nodeId;
+
     if (pending) {
       graph.recordAction(pending.fromId, pending.action, nodeId);
       // Record where this button actually went (first destination wins).
@@ -159,6 +167,11 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         destinationOf.set(pending.signature, nodeId);
       }
       pending = undefined;
+    }
+
+    if (sameNodeStreak >= 12) {
+      log(`[${step}] stuck on one screen for ${sameNodeStreak} steps — stopping`);
+      break;
     }
 
     if (opts.shouldStop?.(graph.counts)) {
@@ -185,21 +198,39 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     // keyboard rather than navigating away).
     const untriedEditable = editableFields.filter((f) => untriedKeys.has(selectorKey(f.selector)));
     if (editableFields.length >= 2 && untriedEditable.length > 0) {
-      for (const field of editableFields) {
-        await driver.tap(field.center);
-        await driver.waitForIdle();
-        await driver.type(synthesizeInput(field.hint));
-        graph.markTried(nodeId, field.selector);
-      }
-      await driver.back();
-      log(`[${step}] ${nodeId} filled ${editableFields.length} form fields`);
       const first = editableFields[0]!;
+      // Long forms have fields below the fold (e.g. the phone number at the
+      // bottom). Fill every visible field, scroll down, fill newly-revealed
+      // ones, repeat — then dismiss the keyboard SAFELY (only if shown, so it
+      // never navigates and pops a "discard changes?" dialog).
+      const filledSigs = new Set<string>();
+      let totalFilled = 0;
+      for (let pass = 0; pass < 5; pass++) {
+        const passTree = pass === 0 ? tree : await driver.uiTree();
+        const fields = collectInteractables(passTree).filter((i) => i.editable);
+        const fresh = fields.filter((f) => !filledSigs.has(signatureOf(f.selector)));
+        for (const f of fresh) {
+          await driver.tap(f.center);
+          await driver.waitForIdle();
+          await driver.type(synthesizeInput(f.hint));
+          await driver.dismissKeyboard();
+          filledSigs.add(signatureOf(f.selector));
+          graph.markTried(nodeId, f.selector);
+          totalFilled += 1;
+        }
+        if (fresh.length === 0) break;
+        const h = passTree.bounds?.h ?? 2400;
+        const w = passTree.bounds?.w ?? 1080;
+        await driver.swipe({ x: w / 2, y: h * 0.72 }, { x: w / 2, y: h * 0.3 }, 400);
+        await driver.waitForIdle();
+      }
+      log(`[${step}] ${nodeId} filled ${totalFilled} form fields (scroll-fill)`);
       pending = {
         fromId: nodeId,
         action: { kind: 'type', selector: first.selector, point: first.center, inputValue: '(form)' },
         signature: signatureOf(first.selector),
       };
-      history.push(`${title ?? nodeId} → fill form (${editableFields.length} fields)`);
+      history.push(`${title ?? nodeId} → fill form (${totalFilled} fields)`);
       consecutiveBacks = 0;
       await driver.waitForIdle();
       continue;
@@ -243,6 +274,19 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       decision = candidates.length > 0 ? { act: 'tap', index: 0 } : { act: 'back' };
     }
 
+    // back is being eaten by a modal — stop backing, tap a candidate to escape
+    // (e.g. "Leave" on a discard dialog). If there's nothing to tap, stop.
+    if (decision.act === 'back' && backWasNoOp) {
+      if (candidates.length > 0) {
+        const best = candidates.reduce((a, b) => (b.score > a.score ? b : a));
+        decision = best.editable
+          ? { act: 'type', index: best.index, reason: 'back trapped by a modal; interacting to escape' }
+          : { act: 'tap', index: best.index, reason: 'back trapped by a modal; tapping to escape' };
+      } else {
+        decision = { act: 'stop', reason: 'back trapped and nothing to tap' };
+      }
+    }
+
     if (decision.act === 'stop') {
       log(`[${step}] decider: stop${decision.reason ? ` — ${decision.reason}` : ''}`);
       break;
@@ -272,7 +316,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         await driver.waitForIdle();
         await driver.type(value);
         await driver.pressEnter();
-        await driver.back();
+        await driver.dismissKeyboard();
         pending = {
           fromId: nodeId,
           action: { kind: 'type', selector: chosen.selector, point: chosen.center, inputValue: value },

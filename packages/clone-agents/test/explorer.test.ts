@@ -100,6 +100,7 @@ class FakeDriver implements DeviceDriver {
   async swipe(): Promise<void> {}
   async type(): Promise<void> {}
   async pressEnter(): Promise<void> {}
+  async dismissKeyboard(): Promise<void> {}
   async deepLink(): Promise<void> {}
   async routeHint(): Promise<string | undefined> {
     return `com.demo/.${this.current}Activity`;
@@ -217,12 +218,14 @@ describe('text input handling', () => {
     };
     const typed: Array<{ value: string }> = [];
     let backs = 0;
+    let dismisses = 0;
     const driver: DeviceDriver = {
       async launch() {},
       async uiTree() { return form; },
       async tap() {},
       async type(t: string) { typed.push({ value: t }); },
       async pressEnter() {},
+      async dismissKeyboard() { dismisses += 1; },
       async back() { backs += 1; },
       async swipe() {}, async deepLink() {},
       async screenshot(p: string) { return p; },
@@ -233,8 +236,53 @@ describe('text input handling', () => {
     await explore(driver, { appId: 'com.x', maxActions: 2 });
     // all three fields filled by their own hint, in one form-fill step
     expect(typed.map((t) => t.value)).toEqual(['Test User', '123 Main St', '10001']);
-    // exactly one back (keyboard dismiss), NOT one per field — so no leave dialog
-    expect(backs).toBe(1);
+    // keyboard closed via dismissKeyboard (safe), NEVER raw back — so no leave dialog
+    expect(dismisses).toBeGreaterThanOrEqual(1);
+    expect(backs).toBe(0);
+  });
+
+  it('escapes a modal that eats back by tapping its exit button (the leave-dialog trap)', async () => {
+    // The app resumes ON a "Sure you want to leave?" dialog whose buttons are
+    // Leave (exits) and Cancel. back() is swallowed by the modal (no-op). The
+    // explorer must stop backing and tap "Leave" to escape — not loop forever.
+    const dialog: UiNode = {
+      className: 'screen.leave_dialog',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.TextView', text: 'Sure you want to leave now?', bounds: { x: 40, y: 200, w: 800, h: 60 }, children: [] },
+        { className: 'android.widget.Button', resourceId: 'com.x:id/leave', text: 'Leave', clickable: true, enabled: true, bounds: { x: 40, y: 600, w: 1000, h: 140 }, children: [] },
+        { className: 'android.widget.Button', resourceId: 'com.x:id/cancel', text: 'Cancel', clickable: true, enabled: true, bounds: { x: 40, y: 760, w: 1000, h: 140 }, children: [] },
+      ],
+    };
+    const home: UiNode = {
+      className: 'screen.home',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [{ className: 'android.widget.TextView', text: 'Home', bounds: { x: 40, y: 60, w: 300, h: 60 }, children: [] }],
+    };
+    let onDialog = true;
+    let tappedLeave = false;
+    const driver: DeviceDriver = {
+      async launch() {},
+      async uiTree() { return onDialog ? dialog : home; },
+      async tap(p) {
+        // "Leave" button is the one at y~670
+        if (onDialog && p.y > 600 && p.y < 740) { tappedLeave = true; onDialog = false; }
+      },
+      async type() {}, async pressEnter() {}, async dismissKeyboard() {},
+      async back() { /* modal swallows back: no state change */ },
+      async swipe() {}, async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return 'com.x/.Main'; },
+      async waitForIdle() {},
+    };
+
+    // Force the worst case: a decider that always says "back" (what the LLM did
+    // live). The no-op-back detection must override it and tap to escape.
+    const ifg = await explore(driver, { appId: 'com.x', maxActions: 30, decide: () => ({ act: 'back' }) });
+    expect(tappedLeave).toBe(true); // escaped via the button, not infinite back
+    // reached home after escaping; the dialog wasn't visited dozens of times
+    const dialogNode = ifg.nodes.find((n) => /leave/i.test(n.title ?? ''));
+    expect(dialogNode!.visits).toBeLessThan(6);
   });
 
   it('types + submits into a search box instead of re-tapping (the iHerb trap)', async () => {
@@ -268,6 +316,9 @@ describe('text input handling', () => {
       async pressEnter() {
         calls.push('enter');
         submitted = true; // search submitted → next screen is results
+      },
+      async dismissKeyboard() {
+        calls.push('dismiss');
       },
       async back() {
         calls.push('back');
@@ -335,6 +386,7 @@ describe('prioritization & revisit suppression', () => {
     async swipe() {}
     async type() {}
     async pressEnter() {}
+    async dismissKeyboard() {}
     async deepLink() {}
     async routeHint() { return `com.x/.${this.current}`; }
     async waitForIdle() {}
