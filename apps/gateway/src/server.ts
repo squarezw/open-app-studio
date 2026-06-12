@@ -112,7 +112,9 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
     if (!appId) return c.json({ error: 'provide `url` or `appId`' }, 400);
 
     const driver: DeviceDriver =
-      body.driver === 'fake' ? new FakeDriver() : new AdbDriver({ serial: body.serial });
+      body.driver === 'fake'
+        ? new FakeDriver()
+        : new AdbDriver({ serial: body.serial, log: (m) => console.log(`[adb] ${m}`) });
 
     const wantHeuristic = body.brain === 'heuristic';
     const brainSetup = wantHeuristic ? { brain: 'heuristic' as const } : makeDecider(appName);

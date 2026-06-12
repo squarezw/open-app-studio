@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -15,6 +15,16 @@ export interface AdbDriverOptions {
   adbPath?: string;
   /** Default settle time after actions, ms. */
   settleMs?: number;
+  /** Boot an emulator if no device is connected (default true). */
+  autoBoot?: boolean;
+  /** AVD name to boot; default OAS_ANDROID_AVD env, else the first listed AVD. */
+  avd?: string;
+  /** Emulator binary; default OAS_EMULATOR_PATH or $ANDROID_HOME/emulator/emulator. */
+  emulatorPath?: string;
+  /** Max time to wait for the emulator to finish booting (default 240s; cold boots are slow). */
+  bootTimeoutMs?: number;
+  /** Progress log (boot can take a minute). */
+  log?: (message: string) => void;
 }
 
 /** Explicit option → OAS_ADB_PATH → $ANDROID_HOME/platform-tools/adb → "adb" on PATH. */
@@ -29,16 +39,40 @@ function resolveAdbPath(explicit?: string): string {
   return 'adb';
 }
 
+/** $ANDROID_HOME/emulator/emulator, else OAS_EMULATOR_PATH, else "emulator". */
+function resolveEmulatorPath(explicit?: string): string {
+  if (explicit) return explicit;
+  if (process.env.OAS_EMULATOR_PATH) return process.env.OAS_EMULATOR_PATH;
+  const sdkHome = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
+  if (sdkHome) {
+    const candidate = join(sdkHome, 'emulator', 'emulator');
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'emulator';
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** Android driver over plain adb — no on-device agent required. */
 export class AdbDriver implements DeviceDriver {
   private readonly adb: string;
   private readonly baseArgs: string[];
   private readonly settleMs: number;
+  private readonly autoBoot: boolean;
+  private readonly avd?: string;
+  private readonly emulatorPath: string;
+  private readonly bootTimeoutMs: number;
+  private readonly log: (message: string) => void;
 
   constructor(opts: AdbDriverOptions = {}) {
     this.adb = resolveAdbPath(opts.adbPath);
     this.baseArgs = opts.serial ? ['-s', opts.serial] : [];
     this.settleMs = opts.settleMs ?? 1000;
+    this.autoBoot = opts.autoBoot ?? true;
+    this.avd = opts.avd ?? process.env.OAS_ANDROID_AVD;
+    this.emulatorPath = resolveEmulatorPath(opts.emulatorPath);
+    this.bootTimeoutMs = opts.bootTimeoutMs ?? 240_000;
+    this.log = opts.log ?? (() => {});
   }
 
   private async run(args: string[], opts: { binary?: boolean } = {}): Promise<Buffer> {
@@ -60,7 +94,11 @@ export class AdbDriver implements DeviceDriver {
 
   /** Fails fast with actionable messages before exploration starts. */
   async preflight(appId: string): Promise<void> {
-    const state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
+    let state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
+    if (state !== 'device') {
+      if (this.autoBoot) await this.bootEmulator();
+      state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
+    }
     if (state !== 'device') {
       throw new Error(
         'No Android device/emulator connected (adb get-state). Start one, e.g.: emulator -avd oas-test',
@@ -74,6 +112,51 @@ export class AdbDriver implements DeviceDriver {
           `Install it first (adb install <file.apk>), then start the run again.`,
       );
     }
+  }
+
+  /** List installed AVDs via the emulator binary. */
+  private async listAvds(): Promise<string[]> {
+    try {
+      const { stdout } = await execFileAsync(this.emulatorPath, ['-list-avds'], { encoding: 'utf8' });
+      return stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Boot an emulator and wait for Android to finish booting (best-effort). */
+  private async bootEmulator(): Promise<void> {
+    const avds = await this.listAvds();
+    if (avds.length === 0) {
+      this.log(`no AVDs found via "${this.emulatorPath} -list-avds" — cannot auto-boot`);
+      return;
+    }
+    const avd = this.avd && avds.includes(this.avd) ? this.avd : avds[0]!;
+    this.log(`no device connected — booting emulator "${avd}" (a cold boot can take 1-3 min)…`);
+
+    const child = spawn(this.emulatorPath, ['-avd', avd, '-no-snapshot-save', '-no-boot-anim'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+
+    const deadline = Date.now() + this.bootTimeoutMs;
+    // Wait for the device to attach, then for sys.boot_completed.
+    while (Date.now() < deadline) {
+      const state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
+      if (state === 'device') {
+        const booted = (await this.run(['shell', 'getprop', 'sys.boot_completed']).catch(() => Buffer.from('')))
+          .toString('utf8')
+          .trim();
+        if (booted === '1') {
+          this.log(`emulator "${avd}" booted`);
+          await this.run(['shell', 'input', 'keyevent', '82']).catch(() => {}); // dismiss keyguard
+          return;
+        }
+      }
+      await sleep(2000);
+    }
+    this.log(`emulator "${avd}" did not finish booting within ${Math.round(this.bootTimeoutMs / 1000)}s`);
   }
 
   async launch(appId: string): Promise<void> {
