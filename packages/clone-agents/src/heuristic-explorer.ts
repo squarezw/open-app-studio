@@ -15,6 +15,15 @@ import { scoreCandidate, signatureOf } from './policy.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Cap vertical scrolling per screen so infinite feeds can't run forever. */
+const MAX_SCROLLS_PER_SCREEN = 4;
+
+/** Does the screen contain a scrollable container? */
+function hasScrollable(node: UiNode): boolean {
+  if (node.scrollable) return true;
+  return node.children.some(hasScrollable);
+}
+
 /**
  * M0 spike: a deterministic, LLM-free Explorer. It walks the app breadth-first
  * by tapping untried clickable elements, pressing back when a screen is
@@ -118,6 +127,8 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   let consecutiveRelaunches = 0;
   let lastObservedNodeId: string | undefined;
   let sameNodeStreak = 0;
+  const scrollsByNode = new Map<string, number>();
+  const scrollExhausted = new Set<string>();
   const history: string[] = [];
   // Cross-screen learning: which node a recurring button leads to, and how
   // often we've landed on each node — so we stop re-opening known dead-ends.
@@ -164,6 +175,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     // A `back` that left us on the same screen is a modal eating the gesture
     // (e.g. a "discard changes?" dialog). Don't keep backing into it.
     const backWasNoOp = pending?.action.kind === 'back' && pending.fromId === nodeId;
+    // A scroll that left us on the SAME node = nothing new scrolled into view:
+    // we're at the bottom, or it's an infinite feed whose structure repeats
+    // (content-invariant fingerprint). Either way, stop scrolling this screen.
+    if (pending?.action.kind === 'scroll' && pending.fromId === nodeId) scrollExhausted.add(nodeId);
     sameNodeStreak = nodeId === lastObservedNodeId ? sameNodeStreak + 1 : 0;
     lastObservedNodeId = nodeId;
 
@@ -322,6 +337,30 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     if (decision.act === 'stop') {
       log(`[${step}] decider: stop${decision.reason ? ` — ${decision.reason}` : ''}`);
       break;
+    }
+
+    // Before leaving an exhausted-but-scrollable screen, scroll down to reveal
+    // below-the-fold content. Bounded: at most MAX_SCROLLS_PER_SCREEN per
+    // screen, and we stop the moment a scroll changes nothing (bottom reached,
+    // or an infinite feed whose structure repeats → same fingerprint → marked
+    // scrollExhausted on the next observe).
+    const scrolls = scrollsByNode.get(nodeId) ?? 0;
+    if (
+      decision.act === 'back' &&
+      candidates.length === 0 &&
+      hasScrollable(tree) &&
+      !scrollExhausted.has(nodeId) &&
+      scrolls < MAX_SCROLLS_PER_SCREEN
+    ) {
+      scrollsByNode.set(nodeId, scrolls + 1);
+      const h = tree.bounds?.h ?? 2400;
+      const w = tree.bounds?.w ?? 1080;
+      log(`[${step}] ${nodeId} exhausted — scroll down (${scrolls + 1}/${MAX_SCROLLS_PER_SCREEN})`);
+      await driver.swipe({ x: w / 2, y: h * 0.75 }, { x: w / 2, y: h * 0.3 }, 400);
+      pending = { fromId: nodeId, action: { kind: 'scroll', direction: 'down' } };
+      consecutiveBacks = 0;
+      await driver.waitForIdle();
+      continue;
     }
 
     if (decision.act === 'back') {
