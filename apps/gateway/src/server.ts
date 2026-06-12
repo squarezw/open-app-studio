@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { compileBlueprint } from '@oas/app-spec';
@@ -38,6 +40,8 @@ export interface AppDeps {
   generate?: (prompt: string) => Promise<GenerateResult>;
   /** Injectable for tests; builds the exploration brain. Defaults to env-configured LLM, else heuristic. */
   makeDecider?: (appName?: string) => { decide?: Decider; goal?: string; brain: 'llm' | 'heuristic' };
+  /** Where per-run artifacts (screens/, report.md, ifg.json) are written. Enables the screenshot route. */
+  runsDir?: string;
 }
 
 export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
@@ -158,10 +162,39 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
   });
 
   app.get('/api/runs/:id/ifg', (c) => {
-    const record = manager.get(c.req.param('id'));
+    const id = c.req.param('id');
+    const record = manager.get(id);
     if (!record) return c.json({ error: 'run not found' }, 404);
     if (!record.ifg) return c.json({ error: `run is ${record.status}, no graph yet` }, 409);
-    return c.json(record.ifg);
+    // Rewrite local screenshot paths to the served screenshot route so Studio
+    // can render per-screen thumbnails.
+    const ifg = {
+      ...record.ifg,
+      nodes: record.ifg.nodes.map((n) => ({
+        ...n,
+        evidence: n.evidence?.map((e) =>
+          e.type === 'screenshot' && e.ref.includes('/screens/')
+            ? { ...e, ref: `/api/runs/${id}/screens/${basename(e.ref)}` }
+            : e,
+        ),
+      })),
+    };
+    return c.json(ifg);
+  });
+
+  // Serve a captured screenshot (only filenames we generate: step_<n>.png).
+  app.get('/api/runs/:id/screens/:file', async (c) => {
+    const id = c.req.param('id');
+    const file = basename(c.req.param('file'));
+    if (!deps.runsDir || !/^[\w-]+$/.test(id) || !/^step_\d+\.png$/.test(file)) {
+      return c.json({ error: 'not found' }, 404);
+    }
+    try {
+      const png = await readFile(join(deps.runsDir, id, 'screens', file));
+      return c.body(png, 200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=3600' });
+    } catch {
+      return c.json({ error: 'screenshot not found' }, 404);
+    }
   });
 
   app.post('/api/runs/:id/blueprint', async (c) => {

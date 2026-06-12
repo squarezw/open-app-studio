@@ -121,5 +121,8 @@ export function edgeLabel(e: ActionEdge): string {
 }
 
 function firstHttpScreenshot(n: ScreenNode): string | undefined {
-  return n.evidence?.find((e) => e.type === 'screenshot' && /^https?:\/\//.test(e.ref))?.ref;
+  // http(s) = store metadata; /api/... = a gateway-served captured screenshot.
+  return n.evidence?.find(
+    (e) => e.type === 'screenshot' && (/^https?:\/\//.test(e.ref) || e.ref.startsWith('/api/')),
+  )?.ref;
 }

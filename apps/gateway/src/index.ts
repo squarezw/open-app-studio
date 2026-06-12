@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
 import { WebSocketServer } from 'ws';
@@ -5,12 +6,14 @@ import { RunManager } from './run-manager.js';
 import { createApp } from './server.js';
 
 const port = Number(process.env.PORT ?? 4400);
-const manager = new RunManager();
-const app = createApp(manager);
+const runsDir = resolve(process.env.OAS_RUNS_DIR ?? 'runs');
+const manager = new RunManager(runsDir);
+const app = createApp(manager, { runsDir });
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
   console.log(`OAS gateway listening on http://localhost:${info.port}`);
   console.log(`Live viewer:           http://localhost:${info.port}/`);
+  console.log(`Run artifacts:         ${runsDir}/<runId>/ (report.md + screens/ + ifg.json)`);
 }) as Server;
 
 // WebSocket: replay buffered run events, then stream live ones.
