@@ -212,6 +212,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         for (const f of fresh) {
           await driver.tap(f.center);
           await driver.waitForIdle();
+          await driver.clearText(); // avoid "testtest" if a field is re-typed
           await driver.type(synthesizeInput(f.hint));
           await driver.dismissKeyboard();
           filledSigs.add(signatureOf(f.selector));
@@ -314,6 +315,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         log(`[${step}] ${nodeId} type ${JSON.stringify(value)} into "${chosen.label}"${decision.reason ? ` — ${decision.reason}` : ''}`);
         await driver.tap(chosen.center);
         await driver.waitForIdle();
+        await driver.clearText();
         await driver.type(value);
         await driver.pressEnter();
         await driver.dismissKeyboard();
