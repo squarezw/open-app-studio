@@ -4,7 +4,7 @@ import addFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 import type { DeviceDriver } from '@oas/device-bridge';
 import type { Point, UiNode } from '@oas/flow-graph';
-import { collectInteractables, explore, synthesizeInput } from '../src/heuristic-explorer.js';
+import { collectInteractables, explore, pickFirstOption, synthesizeInput } from '../src/heuristic-explorer.js';
 
 /**
  * A fake 5-screen app:
@@ -252,6 +252,64 @@ describe('text input handling', () => {
     expect(typed).toEqual(['Test User', '123 Main St', '10001']);
     // the fill itself never presses a raw back — so no "discard changes?" dialog
     expect(backs).toBe(0);
+  });
+
+  it('pickFirstOption picks a real list option, skipping search/cancel/header', () => {
+    const list: UiNode = {
+      className: 'screen.state_picker',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'EditText', text: 'Search', clickable: true, bounds: { x: 0, y: 60, w: 1080, h: 120 }, children: [] }, // top search — skipped (y < 12%)
+        { className: 'TextView', text: 'Cancel', clickable: true, bounds: { x: 900, y: 400, w: 160, h: 80 }, children: [] }, // dismiss — skipped
+        { className: 'TextView', text: 'Alabama', clickable: true, bounds: { x: 0, y: 500, w: 1080, h: 120 }, children: [] },
+        { className: 'TextView', text: 'Alaska', clickable: true, bounds: { x: 0, y: 640, w: 1080, h: 120 }, children: [] },
+      ],
+    };
+    const pick = pickFirstOption(list);
+    expect(pick).toEqual({ x: 540, y: 560 }); // Alabama's center
+  });
+
+  it('opens a dropdown, waits, picks an option, and returns to the form (Country/State picker)', async () => {
+    // A form with one text field and one State dropdown (focusable:false). Tapping
+    // the dropdown opens a list (after a "load"); picking an option sets its value.
+    let mode: 'form' | 'list' = 'form';
+    let stateValue = 'State / Region *';
+    const formTree = (): UiNode => ({
+      className: 'screen.address',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/f', text: 'Full Name *', focusable: true, clickable: true, enabled: true, bounds: { x: 0, y: 200, w: 1080, h: 120 }, children: [] },
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/f', text: 'Zip / Postal Code *', focusable: true, clickable: true, enabled: true, bounds: { x: 0, y: 360, w: 1080, h: 120 }, children: [] },
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/dd', text: stateValue, focusable: false, clickable: true, enabled: true, bounds: { x: 0, y: 520, w: 1080, h: 120 }, children: [] },
+      ],
+    });
+    const listTree = (): UiNode => ({
+      className: 'screen.state_list',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'TextView', text: 'California', clickable: true, bounds: { x: 0, y: 500, w: 1080, h: 120 }, children: [] },
+        { className: 'TextView', text: 'New York', clickable: true, bounds: { x: 0, y: 640, w: 1080, h: 120 }, children: [] },
+      ],
+    });
+    const driver: DeviceDriver = {
+      async launch() {},
+      async uiTree() { return mode === 'form' ? formTree() : listTree(); },
+      async tap(p) {
+        if (mode === 'form' && p.y >= 520 && p.y <= 640) mode = 'list';    // tapped the dropdown
+        else if (mode === 'list') { stateValue = 'California'; mode = 'form'; } // picked an option
+      },
+      async type() {}, async clearText() {}, async pressEnter() {},
+      async isKeyboardShown() { return true; },
+      async dismissKeyboard() {}, async back() {},
+      async swipe() {}, async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return 'com.x/.Address'; },
+      async waitForIdle() {},
+    };
+
+    await explore(driver, { appId: 'com.x', maxActions: 1 });
+    expect(stateValue).toBe('California'); // the dropdown got a real selection
+    expect(mode).toBe('form'); // and we returned to the form
   });
 
   it('escapes a modal that eats back by tapping its exit button (the leave-dialog trap)', async () => {
