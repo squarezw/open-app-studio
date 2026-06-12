@@ -22,6 +22,7 @@ export interface UiNode {
   clickable?: boolean;
   scrollable?: boolean;
   enabled?: boolean;
+  focusable?: boolean;
   children: UiNode[];
 }
 

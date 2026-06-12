@@ -10,6 +10,7 @@ interface RawNode {
   clickable?: string;
   scrollable?: string;
   enabled?: string;
+  focusable?: string;
   node?: RawNode | RawNode[];
 }
 
@@ -34,6 +35,7 @@ function toUiNode(raw: RawNode): UiNode {
     clickable: raw.clickable === 'true',
     scrollable: raw.scrollable === 'true',
     enabled: raw.enabled !== 'false',
+    focusable: raw.focusable === 'true',
     children: childrenRaw.map(toUiNode),
   };
 }
