@@ -72,7 +72,9 @@ async function main(): Promise<void> {
   await mkdir(outDir, { recursive: true });
 
   const driver: DeviceDriver =
-    values.driver === 'fake' ? new FakeDriver() : new AdbDriver({ serial: values.serial });
+    values.driver === 'fake'
+      ? new FakeDriver()
+      : new AdbDriver({ serial: values.serial, log: (m) => console.log(`[adb] ${m}`) });
 
   console.log(`Exploring ${appName ?? appId} (budget: ${values.actions} actions) → ${outDir}`);
   const orchestrator = new Orchestrator(driver, {
