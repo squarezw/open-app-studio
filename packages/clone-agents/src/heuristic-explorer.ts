@@ -169,11 +169,42 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const screenHeight = tree.bounds?.h ?? 2400;
     const interactables = collectInteractables(tree);
     for (const i of interactables) graph.noteInteractable(nodeId, i.selector);
+    const editableFields = interactables.filter((i) => i.editable);
 
     // Build scored candidates from untried interactables, pruning recurring
     // buttons whose destination is already fully explored (the scanner trap).
     const untriedKeys = new Set(graph.untried(nodeId).map((s) => selectorKey(s)));
     const title = guessTitle(tree);
+
+    // Forms first (deterministic, ahead of the decider): a screen with a
+    // multi-field form and unfilled fields gets every field filled by its own
+    // hint before anything taps a submit button — otherwise validation fails
+    // on empties and backing out pops a "discard changes?" dialog (the trap the
+    // explorer got stuck in on iHerb's address form). One keyboard-dismiss back
+    // at the end (the IME is open after the last type, so it closes the
+    // keyboard rather than navigating away).
+    const untriedEditable = editableFields.filter((f) => untriedKeys.has(selectorKey(f.selector)));
+    if (editableFields.length >= 2 && untriedEditable.length > 0) {
+      for (const field of editableFields) {
+        await driver.tap(field.center);
+        await driver.waitForIdle();
+        await driver.type(synthesizeInput(field.hint));
+        graph.markTried(nodeId, field.selector);
+      }
+      await driver.back();
+      log(`[${step}] ${nodeId} filled ${editableFields.length} form fields`);
+      const first = editableFields[0]!;
+      pending = {
+        fromId: nodeId,
+        action: { kind: 'type', selector: first.selector, point: first.center, inputValue: '(form)' },
+        signature: signatureOf(first.selector),
+      };
+      history.push(`${title ?? nodeId} → fill form (${editableFields.length} fields)`);
+      consecutiveBacks = 0;
+      await driver.waitForIdle();
+      continue;
+    }
+
     const candidates: Candidate[] = [];
     for (const cand of interactables) {
       if (!untriedKeys.has(selectorKey(cand.selector))) continue;
@@ -233,7 +264,8 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       graph.markTried(nodeId, chosen.selector);
       const signature = signatureOf(chosen.selector);
       if (decision.act === 'type') {
-        // Text field: focus, synthesize/accept input, submit, dismiss keyboard.
+        // Single text field (search): focus, type, submit, dismiss keyboard.
+        // (Multi-field forms are filled deterministically before the decider.)
         const value = decision.value ?? synthesizeInput(chosen.hint);
         log(`[${step}] ${nodeId} type ${JSON.stringify(value)} into "${chosen.label}"${decision.reason ? ` — ${decision.reason}` : ''}`);
         await driver.tap(chosen.center);
@@ -310,6 +342,10 @@ export function synthesizeInput(hint: string): string {
   if (/email|e-mail/.test(hint)) return 'test@example.com';
   if (/phone|mobile|tel/.test(hint)) return '5551234567';
   if (/zip|postal/.test(hint)) return '10001';
+  if (/(first|last|full)?\s?name|recipient/.test(hint)) return 'Test User';
+  if (/address|street|line\s?1|line\s?2/.test(hint)) return '123 Main St';
+  if (/city|town/.test(hint)) return 'New York';
+  if (/state|province|region/.test(hint)) return 'NY';
   if (/search|query|find/.test(hint)) return 'vitamin';
   return 'test';
 }

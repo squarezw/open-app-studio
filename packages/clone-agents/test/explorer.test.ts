@@ -194,7 +194,47 @@ describe('text input handling', () => {
     expect(synthesizeInput('login password field')).toBe('Test1234!');
     expect(synthesizeInput('email address')).toBe('test@example.com');
     expect(synthesizeInput('phone number')).toBe('5551234567');
+    expect(synthesizeInput('full name')).toBe('Test User');
+    expect(synthesizeInput('address line 1')).toBe('123 Main St');
+    expect(synthesizeInput('zip / postal code')).toBe('10001');
     expect(synthesizeInput('some other field')).toBe('test');
+  });
+
+  it('fills ALL fields of a multi-field form before submitting (no per-field back)', async () => {
+    const field = (id: string, desc: string, y: number): UiNode => ({
+      className: 'android.widget.EditText', resourceId: id, contentDesc: desc, clickable: true, enabled: true,
+      bounds: { x: 0, y, w: 1080, h: 110 }, children: [],
+    });
+    const form: UiNode = {
+      className: 'screen.address_form',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        field('com.x:id/name', 'Full Name', 200),
+        field('com.x:id/addr', 'Address Line 1', 340),
+        field('com.x:id/zip', 'Zip / Postal Code', 480),
+        { className: 'android.widget.Button', resourceId: 'com.x:id/continue', text: 'Continue', clickable: true, enabled: true, bounds: { x: 0, y: 2200, w: 1080, h: 150 }, children: [] },
+      ],
+    };
+    const typed: Array<{ value: string }> = [];
+    let backs = 0;
+    const driver: DeviceDriver = {
+      async launch() {},
+      async uiTree() { return form; },
+      async tap() {},
+      async type(t: string) { typed.push({ value: t }); },
+      async pressEnter() {},
+      async back() { backs += 1; },
+      async swipe() {}, async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return 'com.x/.AddressForm'; },
+      async waitForIdle() {},
+    };
+
+    await explore(driver, { appId: 'com.x', maxActions: 2 });
+    // all three fields filled by their own hint, in one form-fill step
+    expect(typed.map((t) => t.value)).toEqual(['Test User', '123 Main St', '10001']);
+    // exactly one back (keyboard dismiss), NOT one per field — so no leave dialog
+    expect(backs).toBe(1);
   });
 
   it('types + submits into a search box instead of re-tapping (the iHerb trap)', async () => {
