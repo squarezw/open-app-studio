@@ -47,6 +47,19 @@ export default function FlowCanvas({
     return { nodes: rfNodes, edges: rfEdges };
   }, [graph, highlight]);
 
+  // Node ids touched by the highlighted (selected-flow) edges.
+  const highlightedNodeIds = useMemo(() => {
+    if (!highlight || highlight.size === 0) return undefined;
+    const ids = new Set<string>();
+    for (const e of edges) {
+      if (highlight.has(e.id)) {
+        ids.add(e.source);
+        ids.add(e.target);
+      }
+    }
+    return ids;
+  }, [edges, highlight]);
+
   // Re-fit when the node count changes. A finished run loads all nodes in one
   // batch AFTER mount, so the initial `fitView` (which ran on an empty graph)
   // would otherwise leave them positioned outside the viewport — a blank canvas.
@@ -55,6 +68,16 @@ export default function FlowCanvas({
       instance.current.fitView({ padding: 0.2, duration: 200 });
     }
   }, [nodes.length]);
+
+  // Selecting a flow on the left pans/zooms the canvas to that flow's nodes.
+  useEffect(() => {
+    if (!instance.current || !highlightedNodeIds || highlightedNodeIds.size === 0) return;
+    instance.current.fitView({
+      padding: 0.35,
+      duration: 400,
+      nodes: [...highlightedNodeIds].map((id) => ({ id })),
+    });
+  }, [highlightedNodeIds]);
 
   return (
     <ReactFlow
