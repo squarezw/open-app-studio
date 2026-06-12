@@ -10,8 +10,10 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
-    "test": "turbo run test",
-    "lint": "turbo run lint"
+    "dev": "bash scripts/dev.sh",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
   }
 }

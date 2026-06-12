@@ -12,7 +12,18 @@
 
 ## Status
 
-🚧 **Design phase.** The architecture and v1 scope are documented below. Contributions and discussion welcome.
+🚧 **Active development.** The App Clone Engine (URL → live exploration → Interaction Flow Graph → editable blueprint → Expo codegen) and the Studio canvas work end to end. See [Roadmap](./docs/roadmap.md).
+
+## Quick start
+
+```bash
+pnpm install
+pnpm dev          # builds everything, then runs gateway (:4400) + studio (:3100); Ctrl+C stops both
+```
+
+Open **http://localhost:3100** and hit **▶ Clone** (empty input = fake-device demo, no emulator needed).
+
+For real Android apps: have an emulator running with the target app installed (`adb install app.apk`), pick the **adb** driver, and set `ANDROID_HOME` / `OAS_LLM_API_KEY` in `.env` (see [`.env.example`](./.env.example)). Override ports with `GATEWAY_PORT` / `STUDIO_PORT`.
 
 ## Why
 

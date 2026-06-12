@@ -1,9 +1,14 @@
 # @oas/studio
 
-The web app: visual builder canvas, AI sidebar, and Interaction Flow Graph viewer.
+The web app: Flow Graph viewer + run management. The builder canvas (App Spec editor) arrives in M2.
 
-- **Stack**: Next.js (App Router) · React Flow · shadcn/ui · Tailwind
-- **Key views**: project dashboard · clone-run live view (graph grows in real time over WebSocket) · canvas (App Spec editor) · flow replay
-- Design: [docs/architecture.md](../../docs/architecture.md)
+- **Stack**: Next.js (App Router) · React Flow (@xyflow/react)
+- **Views**: run list + clone launcher (`/`) · live flow graph with role-colored screen nodes, flow highlighting, and Maestro YAML export (`/runs/:id`)
 
-Status: not yet scaffolded — see [Roadmap M1](../../docs/roadmap.md).
+```bash
+pnpm --filter @oas/gateway build && pnpm --filter @oas/gateway start   # gateway on :4400
+pnpm --filter @oas/studio dev                                          # studio on :3000
+# open http://localhost:3000 and hit "▶ Clone" (empty input = fake demo, no emulator needed)
+```
+
+Config: `NEXT_PUBLIC_GATEWAY_URL` (default `http://localhost:4400`).

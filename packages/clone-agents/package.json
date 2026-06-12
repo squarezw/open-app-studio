@@ -1,0 +1,35 @@
+{
+  "name": "@oas/clone-agents",
+  "version": "0.1.0",
+  "description": "App Clone Engine agents. M0: heuristic single-Explorer spike (no LLM) + CLI",
+  "license": "GPL-3.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "oas-spike": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@oas/device-bridge": "workspace:*",
+    "@oas/flow-graph": "workspace:*",
+    "@oas/llm": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "ajv": "^8.17.0",
+    "ajv-formats": "^3.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
