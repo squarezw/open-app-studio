@@ -12,7 +12,7 @@ const IFG: PartialIfg = {
     { id: 'orphan', fingerprint: 'lh1:d' },
   ],
   edges: [
-    { id: 'e1', from: 'home', to: 'cart', action: { kind: 'tap', selector: { resourceId: 'com.x:id/btn_cart' } } },
+    { id: 'e1', from: 'home', to: 'cart', action: { kind: 'tap', selector: { resourceId: 'com.x:id/btn_cart' }, point: { x: 540, y: 1800 } } },
     { id: 'e2', from: 'cart', to: 'checkout', action: { kind: 'tap', selector: { text: 'Checkout' } } },
     { id: 'e3', from: 'cart', to: 'home', action: { kind: 'back' } },
   ],
@@ -50,6 +50,17 @@ describe('ifgToFlow', () => {
       .toBe('tap Buy');
     expect(edgeLabel({ id: 'x', from: 'a', to: 'b', action: { kind: 'type', inputValue: 'hi' } }))
       .toBe('type "hi"');
+  });
+
+  it('exposes tap markers (device coords + destination) on the originating node', () => {
+    const { nodes } = ifgToFlow(IFG);
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const homeTaps = byId.get('home')!.data.taps;
+    expect(homeTaps).toHaveLength(1); // e1 has a point; tapped on home → cart
+    expect(homeTaps![0]).toMatchObject({ x: 540, y: 1800 });
+    expect(homeTaps![0].label).toContain('Cart');
+    // e2 has no point, e3 is a back edge → cart contributes no markers
+    expect(byId.get('cart')!.data.taps).toBeUndefined();
   });
 
   it('handles an empty graph', () => {

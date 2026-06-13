@@ -94,6 +94,19 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
   max-width: 210px;
 }
 .screen-node img { width: 100%; border-radius: 6px; margin-bottom: 6px; display: block; }
+/* Click-region overlay: where a tap landed on this screen. */
+.screen-node .shot { position: relative; line-height: 0; }
+.screen-node .tap-marker {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px; /* center on the point */
+  border: 2px solid #ff5370;
+  border-radius: 50%;
+  background: rgba(255, 83, 112, 0.25);
+  box-shadow: 0 0 0 2px rgba(255, 83, 112, 0.25);
+  pointer-events: auto;
+}
 .screen-node .title { font-weight: 600; font-size: 13px; }
 .screen-node .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .screen-node[data-role="launch"]   { border-color: #82aaff; }

@@ -9,6 +9,13 @@ import type { ActionEdge, InteractionFlowGraph, ScreenNode } from '@oas/flow-gra
 export type PartialIfg = Pick<InteractionFlowGraph, 'nodes' | 'edges'> &
   Partial<Pick<InteractionFlowGraph, 'flows' | 'meta' | 'frontier'>>;
 
+/** A point that was tapped on this screen (device coords) + where it led. */
+export interface TapMarker {
+  x: number;
+  y: number;
+  label: string;
+}
+
 export interface FlowNode {
   id: string;
   type: 'screen';
@@ -21,6 +28,8 @@ export interface FlowNode {
     phase?: 'pre-main' | 'main';
     section?: string;
     hasTabbar?: boolean;
+    /** Tap points originating from this screen, for the click-region overlay. */
+    taps?: TapMarker[];
   };
 }
 
@@ -46,6 +55,18 @@ export function ifgToFlow(
   const depth = layerByBfs(ifg);
   const rows = new Map<number, number>();
 
+  // Tap points per screen (device coords) — "what region was tapped, and where
+  // it led". Back/scroll have no meaningful point.
+  const titleById = new Map(ifg.nodes.map((n) => [n.id, n.title ?? n.id]));
+  const tapsByNode = new Map<string, TapMarker[]>();
+  for (const e of ifg.edges) {
+    const p = e.action.point;
+    if (!p || e.action.kind === 'back' || e.action.kind === 'scroll') continue;
+    const arr = tapsByNode.get(e.from) ?? [];
+    arr.push({ x: p.x, y: p.y, label: `${edgeLabel(e)} → ${titleById.get(e.to) ?? e.to}` });
+    tapsByNode.set(e.from, arr);
+  }
+
   const nodes = ifg.nodes.map((n) => {
     const d = depth.get(n.id) ?? 0;
     const row = rows.get(d) ?? 0;
@@ -62,6 +83,7 @@ export function ifgToFlow(
         phase: n.phase,
         section: n.section,
         hasTabbar: n.patterns?.some((p) => p.kind === 'tabbar'),
+        taps: tapsByNode.get(n.id),
       },
     };
   });

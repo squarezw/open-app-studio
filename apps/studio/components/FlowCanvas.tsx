@@ -37,9 +37,11 @@ export default function FlowCanvas({
   const [layout, setLayout, onNodesChange] = useNodesState<Node>([]);
   const draggedRef = useRef(new Set<string>());
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
-  // View toggles: show screenshots in cards, and show "what was tapped" on edges.
+  // View toggles: screenshots in cards, "what was tapped" on edges, and the
+  // click-region overlay (markers on the screenshot showing where taps landed).
   const [showImages, setShowImages] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
+  const [showTaps, setShowTaps] = useState(false);
 
   // Node ids on the highlighted (selected) flow — its edges' endpoints.
   const highlightedNodeIds = useMemo(() => {
@@ -111,13 +113,14 @@ export default function FlowCanvas({
     () =>
       layout.map((n) => ({
         ...n,
+        data: { ...n.data, showTaps },
         style: {
           ...n.style,
           opacity: dim && !highlightedNodeIds!.has(n.id) ? 0.18 : 1,
           transition: 'opacity 200ms',
         },
       })),
-    [layout, dim, highlightedNodeIds],
+    [layout, dim, highlightedNodeIds, showTaps],
   );
 
   // Re-fit when the node count changes, or when toggling images reflows the
@@ -191,6 +194,14 @@ export default function FlowCanvas({
         >
           <TagIcon />
         </button>
+        <button
+          title={showTaps ? 'Hide tapped regions' : 'Show tapped regions on screenshots'}
+          onClick={() => setShowTaps((v) => !v)}
+          data-state={showTaps ? 'on' : 'off'}
+          aria-label="Toggle tapped regions"
+        >
+          <CrosshairIcon />
+        </button>
         <span className="sep" />
         <button title="Tidy up — restore the automatic layout" onClick={realign} aria-label="Tidy up layout">
           <GridIcon />
@@ -240,6 +251,18 @@ function TagIcon() {
     <svg {...ICON}>
       <path d="M20.59 13.41 13.42 20.59a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
       <line x1="7" y1="7" x2="7.01" y2="7" />
+    </svg>
+  );
+}
+
+function CrosshairIcon() {
+  return (
+    <svg {...ICON}>
+      <circle cx="12" cy="12" r="8" />
+      <line x1="12" y1="2" x2="12" y2="6" />
+      <line x1="12" y1="18" x2="12" y2="22" />
+      <line x1="2" y1="12" x2="6" y2="12" />
+      <line x1="18" y1="12" x2="22" y2="12" />
     </svg>
   );
 }
