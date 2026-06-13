@@ -82,6 +82,17 @@ export default function RunView({ id }: { id: string }) {
     return flow ? new Set(flow.edgeIds) : undefined;
   }, [graph.flows, selectedFlow]);
 
+  async function rerun() {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/rerun`, { method: 'POST' });
+      const data = (await res.json()) as { runId?: string; error?: string };
+      if (!res.ok || !data.runId) throw new Error(data.error ?? `HTTP ${res.status}`);
+      router.push(`/runs/${data.runId}`);
+    } catch (err) {
+      setError(`re-run failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   async function promote() {
     setPromoting(true);
     try {
@@ -142,6 +153,9 @@ export default function RunView({ id }: { id: string }) {
               {promoting ? 'Promoting…' : '🧱 Promote to Blueprint'}
             </button>
           </>
+        )}
+        {run && run.status !== 'running' && run.rerunnable && (
+          <button className="promote" onClick={rerun}>↻ Re-run</button>
         )}
         {run?.status === 'running' && (
           <p className="run-hint">Exploring live — watch the emulator. The graph grows as screens are found.</p>

@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RunManager } from '../src/run-manager.js';
 import { createApp } from '../src/server.js';
@@ -218,6 +221,41 @@ describe('gateway API', () => {
     });
     expect((await heuristicRun.json()).brain).toBe('heuristic');
     expect(deciderBuilt).toBe(1); // unchanged
+  });
+
+  it('persists runs to disk, reloads them after a restart, and re-runs them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oas-runs-'));
+    // "First boot": run to completion → artifacts written to disk.
+    const m1 = new RunManager(dir);
+    const app1 = createApp(m1, { runsDir: dir });
+    const create = await app1.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'com.fakeshop', driver: 'fake', brain: 'heuristic', maxActions: 30 }),
+    });
+    const { runId } = (await create.json()) as { runId: string };
+    await waitForDone(app1, runId);
+
+    // "Restart": a fresh manager over the same dir reloads the finished run.
+    const m2 = new RunManager(dir);
+    expect(m2.loadFromDisk()).toBeGreaterThanOrEqual(1);
+    const app2 = createApp(m2, { runsDir: dir });
+    const reloaded = (await (await app2.request(`/api/runs/${runId}`)).json()) as {
+      status: string;
+      rerunnable: boolean;
+    };
+    expect(reloaded.status).toBe('done');
+    expect(reloaded.rerunnable).toBe(true);
+    // its IFG survived too
+    expect((await app2.request(`/api/runs/${runId}/ifg`)).status).toBe(200);
+
+    // Re-run it with the same spec → a new run.
+    const rerun = await app2.request(`/api/runs/${runId}/rerun`, { method: 'POST' });
+    expect(rerun.status).toBe(201);
+    const rr = (await rerun.json()) as { runId: string; rerunOf: string };
+    expect(rr.runId).not.toBe(runId);
+    expect(rr.rerunOf).toBe(runId);
+    await waitForDone(app2, rr.runId);
   });
 
   it('serves the live viewer page', async () => {

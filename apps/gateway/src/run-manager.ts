@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Orchestrator, type CloneRunOptions } from '@oas/clone-agents';
@@ -13,6 +14,19 @@ export interface RunEvent {
   data: unknown;
 }
 
+/** Everything needed to RE-RUN a clone with the same parameters. */
+export interface RunSpec {
+  appId: string;
+  appName?: string;
+  url?: string;
+  storeUrl?: string;
+  driver: 'adb' | 'fake' | 'appium';
+  brain: 'llm' | 'heuristic';
+  serial?: string;
+  maxActions?: number;
+  stallThreshold?: number;
+}
+
 export interface RunRecord {
   id: string;
   appId: string;
@@ -21,35 +35,70 @@ export interface RunRecord {
   events: RunEvent[];
   ifg?: InteractionFlowGraph;
   error?: string;
+  spec?: RunSpec;
 }
 
 type Listener = (event: RunEvent) => void;
 
 /**
- * In-memory run store. When `runsDir` is set, each run also persists artifacts
- * to `<runsDir>/<id>/`: per-step screenshots (screens/step_N.png), the decision
- * log with reasoning (report.md), and ifg.json — so a finished run can be
- * inspected from disk without re-watching it.
+ * Run store with on-disk persistence. Each run writes `<runsDir>/<id>/`:
+ * run.json (spec + status + coverage), report.md, screens/, ifg.json. On
+ * startup we reload those so finished runs survive a gateway restart and can be
+ * re-run.
  */
 export class RunManager {
   private runs = new Map<string, RunRecord & { listeners: Set<Listener> }>();
 
   constructor(private runsDir?: string) {}
 
-  start(driver: DeviceDriver, opts: CloneRunOptions): RunRecord {
+  /** Reload finished runs from disk (call once at startup). */
+  loadFromDisk(): number {
+    if (!this.runsDir || !existsSync(this.runsDir)) return 0;
+    let loaded = 0;
+    for (const id of readdirSync(this.runsDir)) {
+      const dir = join(this.runsDir, id);
+      const metaPath = join(dir, 'run.json');
+      if (this.runs.has(id) || !existsSync(metaPath)) continue;
+      try {
+        const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as Partial<RunRecord> & { spec?: RunSpec; coverage?: unknown };
+        const ifgPath = join(dir, 'ifg.json');
+        const ifg = existsSync(ifgPath) ? (JSON.parse(readFileSync(ifgPath, 'utf8')) as InteractionFlowGraph) : undefined;
+        this.runs.set(id, {
+          id,
+          appId: meta.appId ?? meta.spec?.appId ?? id,
+          // a run that was 'running' when the server died is stale → mark error
+          status: meta.status === 'done' ? 'done' : meta.status === 'running' ? 'error' : (meta.status ?? 'error'),
+          createdAt: meta.createdAt ?? new Date(0).toISOString(),
+          events: [],
+          ifg,
+          error: meta.status === 'running' ? 'interrupted by server restart' : meta.error,
+          spec: meta.spec,
+          listeners: new Set(),
+        });
+        loaded += 1;
+      } catch {
+        /* skip unreadable run dirs */
+      }
+    }
+    return loaded;
+  }
+
+  start(spec: RunSpec, driver: DeviceDriver, opts: CloneRunOptions): RunRecord {
     const id = randomUUID();
     const artifactsDir = this.runsDir ? join(this.runsDir, id) : undefined;
     const record: RunRecord & { listeners: Set<Listener> } = {
       id,
-      appId: opts.appId,
+      appId: spec.appId,
       status: 'running',
       createdAt: new Date().toISOString(),
       events: [],
+      spec,
       listeners: new Set(),
     };
     this.runs.set(record.id, record);
+    if (artifactsDir) void this.persist(record, artifactsDir);
 
-    const orchestrator = new Orchestrator(driver, { ...opts, outDir: artifactsDir ?? opts.outDir });
+    const orchestrator = new Orchestrator(driver, { ...opts, appId: spec.appId, outDir: artifactsDir ?? opts.outDir });
     orchestrator.on('graph', (e: GraphEvent) => this.push(record, 'graph', e));
     orchestrator.on('log', (m: string) => this.push(record, 'log', m));
 
@@ -73,7 +122,7 @@ export class RunManager {
   }
 
   /** Registers an already-finished graph (e.g. metadata-only provisional IFG). */
-  addCompleted(ifg: InteractionFlowGraph): RunRecord {
+  addCompleted(ifg: InteractionFlowGraph, spec?: RunSpec): RunRecord {
     const record: RunRecord & { listeners: Set<Listener> } = {
       id: randomUUID(),
       appId: ifg.meta.appId ?? ifg.meta.appName,
@@ -81,6 +130,7 @@ export class RunManager {
       createdAt: new Date().toISOString(),
       events: [],
       ifg,
+      spec,
       listeners: new Set(),
     };
     this.runs.set(record.id, record);
@@ -110,12 +160,28 @@ export class RunManager {
     for (const listener of record.listeners) listener(event);
   }
 
-  /** Write report.md + ifg.json for a finished run (best-effort). */
+  /** Write run.json + report.md + ifg.json for a run (best-effort). */
   private async persist(record: RunRecord, dir: string): Promise<void> {
     try {
       await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, 'run.json'),
+        JSON.stringify(
+          {
+            id: record.id,
+            appId: record.appId,
+            status: record.status,
+            createdAt: record.createdAt,
+            error: record.error,
+            spec: record.spec,
+            coverage: record.ifg?.meta.coverage,
+          },
+          null,
+          2,
+        ),
+      );
       if (record.ifg) await writeFile(join(dir, 'ifg.json'), JSON.stringify(record.ifg, null, 2));
-      await writeFile(join(dir, 'report.md'), this.renderReport(record));
+      if (record.status !== 'running') await writeFile(join(dir, 'report.md'), this.renderReport(record));
     } catch {
       /* artifacts are best-effort; never fail a run over them */
     }
@@ -133,25 +199,21 @@ export class RunManager {
       cov ? `- coverage: ${cov.nodes} screens, ${cov.edges} transitions, ${cov.actions} actions, ${cov.frontier} frontier` : '',
       '',
     ];
-
     if (ifg && ifg.nodes.length > 0) {
       lines.push('## Screens', '');
       ifg.nodes.forEach((n, i) => {
         lines.push(`### ${i + 1}. ${n.title ?? n.id} ${n.role ? `(${n.role})` : ''} — ${n.visits ?? 0} visit(s)`);
         const shot = n.evidence?.find((e) => e.type === 'screenshot' && !/^https?:/.test(e.ref))?.ref;
         if (shot) {
-          // ref is an absolute path; link the in-folder copy for markdown viewers
           const rel = shot.split('/screens/').pop();
           if (rel) lines.push('', `![${n.title ?? n.id}](screens/${rel})`);
         }
         lines.push('');
       });
     }
-
     if (ifg?.flows?.length) {
       lines.push('## User flows', '', ...ifg.flows.map((f) => `- **${f.name}** (${f.edgeIds.length} steps)`), '');
     }
-
     lines.push('## Decision log', '', ...(log.length ? log : ['- (no log)']));
     return lines.filter((l) => l !== undefined).join('\n') + '\n';
   }
