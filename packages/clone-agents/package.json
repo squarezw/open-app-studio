@@ -13,7 +13,8 @@
     }
   },
   "bin": {
-    "oas-spike": "./dist/cli.js"
+    "oas-spike": "./dist/cli.js",
+    "oas-bench": "./dist/bench-cli.js"
   },
   "files": ["dist"],
   "scripts": {
