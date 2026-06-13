@@ -170,14 +170,17 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
 
   app.get('/api/runs', (c) =>
     c.json(
-      manager.list().map((r) => ({
-        id: r.id,
-        appId: r.appId,
-        status: r.status,
-        createdAt: r.createdAt,
-        coverage: r.ifg?.meta.coverage,
-        rerunnable: Boolean(r.spec),
-      })),
+      // Newest first (createdAt is an ISO string → lexicographic = chronological).
+      [...manager.list()]
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+        .map((r) => ({
+          id: r.id,
+          appId: r.appId,
+          status: r.status,
+          createdAt: r.createdAt,
+          coverage: r.ifg?.meta.coverage,
+          rerunnable: Boolean(r.spec),
+        })),
     ),
   );
 
