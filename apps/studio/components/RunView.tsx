@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ActionEdge, Flow, ScreenNode } from '@oas/flow-graph';
-import { GATEWAY_URL, gatewayWsUrl, type RunSummary } from '../lib/gateway';
+import {
+  fetchLayout,
+  GATEWAY_URL,
+  gatewayWsUrl,
+  saveLayout,
+  type NodePositions,
+  type RunSummary,
+} from '../lib/gateway';
 import type { PartialIfg } from '../lib/ifg-to-flow';
 import FlowCanvas from './FlowCanvas';
 
@@ -20,6 +27,7 @@ export default function RunView({ id }: { id: string }) {
   const [promoting, setPromoting] = useState(false);
   const [graph, setGraph] = useState<PartialIfg>({ nodes: [], edges: [] });
   const [selectedFlow, setSelectedFlow] = useState<string>();
+  const [savedPositions, setSavedPositions] = useState<NodePositions>();
   const [error, setError] = useState<string>();
   const nodesRef = useRef(new Map<string, ScreenNode>());
   const edgesRef = useRef(new Map<string, ActionEdge>());
@@ -47,6 +55,9 @@ export default function RunView({ id }: { id: string }) {
       }
       if (cancelled) return;
       setRun(info);
+      void fetchLayout(id).then((p) => {
+        if (!cancelled) setSavedPositions(p);
+      });
 
       if (info.status !== 'running') {
         await fetchFullIfg();
@@ -190,7 +201,12 @@ export default function RunView({ id }: { id: string }) {
         )}
       </aside>
       <div className="canvas-wrap">
-        <FlowCanvas graph={graph} highlight={highlight} />
+        <FlowCanvas
+          graph={graph}
+          highlight={highlight}
+          savedPositions={savedPositions}
+          onSaveLayout={(positions) => saveLayout(id, positions)}
+        />
       </div>
     </div>
   );

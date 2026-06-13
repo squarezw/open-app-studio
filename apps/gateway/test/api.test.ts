@@ -23,6 +23,40 @@ async function waitForDone(app: ReturnType<typeof createApp>, runId: string, tim
 }
 
 describe('gateway API', () => {
+  it('persists and reloads a canvas layout for a run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'oas-layout-'));
+    const manager = new RunManager(dir);
+    const app = createApp(manager, { runsDir: dir });
+
+    const create = await app.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'com.fakeshop', driver: 'fake', maxActions: 60 }),
+    });
+    const { runId } = (await create.json()) as { runId: string };
+    await waitForDone(app, runId);
+
+    // No layout yet → empty positions.
+    expect(((await (await app.request(`/api/runs/${runId}/layout`)).json()) as { positions: unknown }).positions).toEqual(
+      {},
+    );
+
+    const positions = { n_1: { x: 120, y: 40 }, n_2: { x: 300, y: 200 } };
+    const put = await app.request(`/api/runs/${runId}/layout`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ positions }),
+    });
+    expect(put.status).toBe(200);
+    expect((await put.json()) as { count: number }).toMatchObject({ count: 2 });
+
+    const got = (await (await app.request(`/api/runs/${runId}/layout`)).json()) as { positions: typeof positions };
+    expect(got.positions).toEqual(positions);
+
+    // Unknown run can't be saved against.
+    expect((await app.request('/api/runs/nope/layout', { method: 'PUT', body: '{}' })).status).toBe(404);
+  });
+
   it('creates a fake-driver run and serves the finished IFG', async () => {
     const { app } = makeApp();
     const create = await app.request('/api/runs', {

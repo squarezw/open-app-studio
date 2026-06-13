@@ -4,6 +4,30 @@ export function gatewayWsUrl(path: string): string {
   return `${GATEWAY_URL.replace(/^http/, 'ws')}${path}`;
 }
 
+export type NodePositions = Record<string, { x: number; y: number }>;
+
+/** Load the saved canvas layout for a run (empty when none saved yet). */
+export async function fetchLayout(id: string): Promise<NodePositions> {
+  try {
+    const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/layout`);
+    if (!res.ok) return {};
+    const data = (await res.json()) as { positions?: NodePositions };
+    return data.positions ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Persist the canvas layout (node positions) for a run. */
+export async function saveLayout(id: string, positions: NodePositions): Promise<void> {
+  const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/layout`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ positions }),
+  });
+  if (!res.ok) throw new Error(`save layout failed: HTTP ${res.status}`);
+}
+
 export interface RunSummary {
   id: string;
   appId: string;

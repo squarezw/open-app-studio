@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -215,6 +215,40 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       })),
     };
     return c.json(ifg);
+  });
+
+  // Persisted canvas layout (user-arranged node positions) for a run. Survives
+  // gateway restarts and follows the run across browsers, like its other artifacts.
+  app.get('/api/runs/:id/layout', async (c) => {
+    const id = c.req.param('id');
+    if (!deps.runsDir || !/^[\w-]+$/.test(id)) return c.json({ positions: {} });
+    try {
+      const raw = await readFile(join(deps.runsDir, id, 'layout.json'), 'utf8');
+      return c.json(JSON.parse(raw) as unknown);
+    } catch {
+      return c.json({ positions: {} }); // no saved layout yet
+    }
+  });
+
+  app.put('/api/runs/:id/layout', async (c) => {
+    const id = c.req.param('id');
+    if (!deps.runsDir || !/^[\w-]+$/.test(id)) return c.json({ error: 'persistence disabled' }, 400);
+    if (!manager.get(id)) return c.json({ error: 'run not found' }, 404);
+    let body: { positions?: Record<string, { x: number; y: number }> };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid json' }, 400);
+    }
+    const positions = body?.positions ?? {};
+    try {
+      const dir = join(deps.runsDir, id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'layout.json'), JSON.stringify({ positions }, null, 2));
+      return c.json({ ok: true, count: Object.keys(positions).length });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
   });
 
   // Serve a captured screenshot (only filenames we generate: step_<n>.png).
