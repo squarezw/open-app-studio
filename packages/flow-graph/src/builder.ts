@@ -142,6 +142,14 @@ export class GraphBuilder {
     return this.untried(nodeId).length > 0;
   }
 
+  /** Any untried interactable anywhere in the graph (is there still somewhere to explore?). */
+  hasAnyUntried(): boolean {
+    for (const forNode of this.interactables.values()) {
+      for (const i of forNode.values()) if (!i.tried) return true;
+    }
+    return false;
+  }
+
   untried(nodeId: string): Selector[] {
     const forNode = this.interactables.get(nodeId);
     if (!forNode) return [];

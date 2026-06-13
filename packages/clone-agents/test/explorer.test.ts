@@ -370,6 +370,44 @@ describe('text input handling', () => {
     expect(mode).toBe('form'); // and we returned to the form
   });
 
+  it('relaunches (not stop) when trapped on a no-candidate modal — if frontier remains', async () => {
+    // Home has two entries: one opens a dead wheel-picker sheet (no clickable
+    // items, eats back); the other is normal. When the explorer falls into the
+    // dead sheet it must NOT kill the run — there's still untried frontier
+    // (the other button), so it relaunches and keeps going.
+    let launched = 0;
+    let onModal = false;
+    const home: UiNode = {
+      className: 'screen.home',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.Button', resourceId: 'com.x:id/open_picker', text: 'Quantity', clickable: true, enabled: true, bounds: { x: 0, y: 200, w: 1080, h: 140 }, children: [] },
+        { className: 'android.widget.Button', resourceId: 'com.x:id/other', text: 'Other', clickable: true, enabled: true, bounds: { x: 0, y: 400, w: 1080, h: 140 }, children: [] },
+      ],
+    };
+    const modal: UiNode = {
+      className: 'screen.qty_picker',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [{ className: 'android.widget.TextView', text: 'Select quantity', bounds: { x: 40, y: 60, w: 400, h: 60 }, children: [] }],
+    };
+    const driver: DeviceDriver = {
+      async launch() { launched += 1; onModal = false; },
+      async uiTree() { return onModal ? modal : home; },
+      async tap(p: Point) { if (!onModal && p.y >= 200 && p.y <= 340) onModal = true; }, // tapped "Quantity"
+      async type() {}, async clearText() {}, async pressEnter() {},
+      async isKeyboardShown() { return false; }, async dismissKeyboard() {},
+      async back() { /* the modal eats back: no state change */ },
+      async swipe() {}, async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return 'com.x/.Main'; },
+      async waitForIdle() {},
+    };
+
+    const ifg = await explore(driver, { appId: 'com.x', maxActions: 12 });
+    expect(launched).toBeGreaterThanOrEqual(2); // initial launch + ≥1 relaunch-to-escape
+    expect(ifg.nodes.length).toBeGreaterThanOrEqual(2); // saw home + the dead modal, kept going
+  });
+
   it('escapes a modal that eats back by tapping its exit button (the leave-dialog trap)', async () => {
     // The app resumes ON a "Sure you want to leave?" dialog whose buttons are
     // Leave (exits) and Cancel. back() is swallowed by the modal (no-op). The
