@@ -10,6 +10,8 @@ export type { ExploreOptions, Candidate, Decision, Decider, DecisionContext } fr
 export { domainPriority, scoreCandidate, signatureOf } from './policy.js';
 export { makeLlmDecider } from './llm-explorer.js';
 export type { LlmDeciderOptions } from './llm-explorer.js';
+export { runDeviceBenchmark, renderScorecard } from './benchmark.js';
+export type { Scorecard, ProbeResult, ProbeStatus } from './benchmark.js';
 export { Orchestrator } from './orchestrator.js';
 export type { CloneRunOptions } from './orchestrator.js';
 export { annotate, deriveFlows } from './annotator.js';

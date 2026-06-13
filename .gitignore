@@ -15,3 +15,6 @@ runs/
 
 # Design + research docs kept local (valuable accumulated experience, not published)
 docs/
+
+# Generated benchmark scorecards (results, kept local)
+bench/
