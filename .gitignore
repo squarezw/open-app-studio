@@ -12,3 +12,6 @@ coverage/
 .DS_Store
 # clone-run artifacts (screenshots, traces) — stored in object storage, not git
 runs/
+
+# Design + research docs kept local (valuable accumulated experience, not published)
+docs/
