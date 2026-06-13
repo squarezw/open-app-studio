@@ -9,7 +9,7 @@ export default function HomePage() {
   const router = useRouter();
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [target, setTarget] = useState('');
-  const [driver, setDriver] = useState<'fake' | 'adb'>('fake');
+  const [driver, setDriver] = useState<'fake' | 'adb'>('adb');
   const [brain, setBrain] = useState<'llm' | 'heuristic'>('llm');
   const [budget, setBudget] = useState(120);
   const [error, setError] = useState<string>();
@@ -35,8 +35,13 @@ export default function HomePage() {
     e.preventDefault();
     setError(undefined);
     const body: Record<string, unknown> = { driver, brain, maxActions: budget };
-    if (/^https?:\/\//.test(target)) body.url = target;
-    else body.appId = target || 'com.fakeshop';
+    // fake → backend uses the demo shop. adb → url, or package, or (empty) the
+    // app currently in the emulator's foreground.
+    if (driver !== 'fake') {
+      const t = target.trim();
+      if (/^https?:\/\//.test(t)) body.url = t;
+      else if (t) body.appId = t;
+    }
     const res = await fetch(`${GATEWAY_URL}/api/runs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -53,16 +58,18 @@ export default function HomePage() {
   return (
     <main className="page">
       <form className="run-form" onSubmit={createRun}>
-        <input
-          type="text"
-          placeholder="App Store / Play URL, or Android package (empty = fake demo)"
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-        />
-        <select value={driver} onChange={(e) => setDriver(e.target.value as 'fake' | 'adb')}>
-          <option value="fake">fake device (demo)</option>
+        <select value={driver} onChange={(e) => setDriver(e.target.value as 'fake' | 'adb')} title="Device backend">
           <option value="adb">adb (emulator)</option>
+          <option value="fake">fake device (demo)</option>
         </select>
+        {driver !== 'fake' && (
+          <input
+            type="text"
+            placeholder="App Store / Play URL or package (empty = current app on emulator)"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+          />
+        )}
         <select value={brain} onChange={(e) => setBrain(e.target.value as 'llm' | 'heuristic')} title="Exploration brain">
           <option value="llm">AI brain (LLM)</option>
           <option value="heuristic">heuristic (fast)</option>

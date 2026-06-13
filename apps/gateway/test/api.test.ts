@@ -92,6 +92,19 @@ describe('gateway API', () => {
     expect((await app.request(`/api/runs/${runId}/pause`, { method: 'POST' })).status).toBe(409);
   });
 
+  it('defaults an empty fake run to the demo shop (no url/package needed)', async () => {
+    const { app } = makeApp();
+    const create = await app.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ driver: 'fake', maxActions: 60 }), // no url, no appId
+    });
+    expect(create.status).toBe(201);
+    const { runId } = (await create.json()) as { runId: string };
+    const info = (await (await app.request(`/api/runs/${runId}`)).json()) as { appId: string };
+    expect(info.appId).toBe('com.fakeshop');
+  });
+
   it('creates a fake-driver run and serves the finished IFG', async () => {
     const { app } = makeApp();
     const create = await app.request('/api/runs', {

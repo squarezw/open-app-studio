@@ -158,7 +158,28 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
         .catch(() => undefined);
     }
 
-    if (!appId) return c.json({ error: 'provide `url` or `appId`' }, 400);
+    // No url/package given: fake → the demo shop; a real device → whatever app
+    // is currently in the foreground on the emulator.
+    if (!appId) {
+      const driver = body.driver ?? 'adb';
+      if (driver === 'fake') {
+        appId = 'com.fakeshop';
+      } else {
+        try {
+          const probe = new AdbDriver({ serial: body.serial });
+          const hint = await probe.routeHint();
+          appId = hint?.split('/')[0];
+        } catch {
+          /* no device / adb error — handled below */
+        }
+        if (!appId || /launcher|nexuslauncher/i.test(appId)) {
+          return c.json(
+            { error: 'no foreground app detected — open an app on the emulator, or enter a url/package' },
+            400,
+          );
+        }
+      }
+    }
 
     const record = beginRun({
       appId,
