@@ -71,6 +71,12 @@ export interface Candidate {
   label: string;
   hint: string;
   editable: boolean;
+  /** Opens a picker on tap (dropdown), vs a plain tap. */
+  dropdown: boolean;
+  /** Current visible text/value — distinguishes fields that share one resourceId. */
+  text?: string;
+  /** Vertical position 0=top..1=bottom — spatial disambiguation for the LLM. */
+  yFraction: number;
   score: number;
   selector: Selector;
   center: { x: number; y: number };
@@ -297,6 +303,9 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         label: labelOf(cand.selector),
         hint: cand.hint,
         editable: cand.editable,
+        dropdown: cand.dropdown,
+        text: cand.text,
+        yFraction: Math.round((cand.center.y / screenHeight) * 100) / 100,
         score: scoreCandidate({
           hint: cand.hint,
           signature,
