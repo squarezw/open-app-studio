@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ActionEdge, Flow, ScreenNode } from '@oas/flow-graph';
 import {
+  controlRun,
   fetchLayout,
   GATEWAY_URL,
   gatewayWsUrl,
@@ -27,6 +28,7 @@ export default function RunView({ id }: { id: string }) {
   const [promoting, setPromoting] = useState(false);
   const [graph, setGraph] = useState<PartialIfg>({ nodes: [], edges: [] });
   const [selectedFlow, setSelectedFlow] = useState<string>();
+  const [selectedEdge, setSelectedEdge] = useState<string>();
   const [savedPositions, setSavedPositions] = useState<NodePositions>();
   const [error, setError] = useState<string>();
   const nodesRef = useRef(new Map<string, ScreenNode>());
@@ -88,10 +90,51 @@ export default function RunView({ id }: { id: string }) {
     };
   }, [id]);
 
+  // Esc clears the focused flow/edge (back to the full graph). Capture phase so
+  // it fires even when the React Flow pane has focus and would swallow the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedFlow(undefined);
+        setSelectedEdge(undefined);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
   const highlight = useMemo(() => {
-    const flow = graph.flows?.find((f: Flow) => f.id === selectedFlow);
-    return flow ? new Set(flow.edgeIds) : undefined;
-  }, [graph.flows, selectedFlow]);
+    if (selectedFlow) {
+      const flow = graph.flows?.find((f: Flow) => f.id === selectedFlow);
+      return flow ? new Set(flow.edgeIds) : undefined;
+    }
+    if (selectedEdge) {
+      // Highlight every path running through the clicked edge (parallels dim).
+      const through = (graph.flows ?? []).filter((f: Flow) => f.edgeIds.includes(selectedEdge));
+      return through.length > 0 ? new Set(through.flatMap((f) => f.edgeIds)) : new Set([selectedEdge]);
+    }
+    return undefined;
+  }, [graph.flows, selectedFlow, selectedEdge]);
+
+  // Selecting a flow and clicking an edge are mutually exclusive highlights.
+  function selectFlow(id: string | undefined) {
+    setSelectedEdge(undefined);
+    setSelectedFlow(id);
+  }
+  function selectEdge(edgeId: string) {
+    setSelectedFlow(undefined);
+    setSelectedEdge((prev) => (prev === edgeId ? undefined : edgeId));
+  }
+
+  // Optimistic run controls — the WS 'status' event confirms the new state.
+  async function control(action: 'pause' | 'resume' | 'stop') {
+    if (action !== 'stop') setRun((p) => (p ? { ...p, status: action === 'pause' ? 'paused' : 'running' } : p));
+    try {
+      await controlRun(id, action);
+    } catch (err) {
+      setError(`${action} failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   async function rerun() {
     try {
@@ -178,7 +221,7 @@ export default function RunView({ id }: { id: string }) {
             key={f.id}
             className="flow-item"
             data-active={selectedFlow === f.id}
-            onClick={() => setSelectedFlow(selectedFlow === f.id ? undefined : f.id)}
+            onClick={() => selectFlow(selectedFlow === f.id ? undefined : f.id)}
           >
             {f.name}
             <div className="steps">
@@ -206,6 +249,11 @@ export default function RunView({ id }: { id: string }) {
           highlight={highlight}
           savedPositions={savedPositions}
           onSaveLayout={(positions) => saveLayout(id, positions)}
+          runStatus={run?.status}
+          onPause={() => control('pause')}
+          onResume={() => control('resume')}
+          onStop={() => control('stop')}
+          onEdgeSelect={selectEdge}
         />
       </div>
     </div>

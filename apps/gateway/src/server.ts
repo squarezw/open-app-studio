@@ -13,7 +13,9 @@ import {
 import {
   AdbDriver,
   AppiumDriver,
+  DEMO_LATE_TABBAR_APP,
   DEMO_TABBED_APP,
+  DEMO_TABBED_ENTRY_APP,
   FakeDriver,
   type DeviceDriver,
 } from '@oas/device-bridge';
@@ -73,9 +75,17 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
 
   /** Build the driver + brain from a (re-runnable) spec and start the run. */
   function beginRun(spec: RunSpec): { runId: string; brain: 'llm' | 'heuristic' } {
+    const fakeApp =
+      spec.appId === 'com.tabbed'
+        ? DEMO_TABBED_APP
+        : spec.appId === 'com.entry'
+          ? DEMO_TABBED_ENTRY_APP
+          : spec.appId === 'com.late'
+            ? DEMO_LATE_TABBAR_APP
+            : undefined;
     const driver: DeviceDriver =
       spec.driver === 'fake'
-        ? new FakeDriver(spec.appId === 'com.tabbed' ? DEMO_TABBED_APP : undefined)
+        ? new FakeDriver(fakeApp)
         : spec.driver === 'appium'
           ? new AppiumDriver({ serial: spec.serial, log: (m) => console.log(`[appium] ${m}`) })
           : new AdbDriver({ serial: spec.serial, log: (m) => console.log(`[adb] ${m}`) });
@@ -168,16 +178,34 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
     return c.json({ runId: record.runId, mode: 'explore', brain: record.brain, rerunOf: prev.id }, 201);
   });
 
+  // Run controls (only meaningful while a run is in flight).
+  app.post('/api/runs/:id/pause', (c) => {
+    const status = manager.pause(c.req.param('id'));
+    return status ? c.json({ status }) : c.json({ error: 'run is not running' }, 409);
+  });
+  app.post('/api/runs/:id/resume', (c) => {
+    const status = manager.resume(c.req.param('id'));
+    return status ? c.json({ status }) : c.json({ error: 'run is not paused' }, 409);
+  });
+  app.post('/api/runs/:id/stop', (c) => {
+    return manager.stop(c.req.param('id'))
+      ? c.json({ ok: true })
+      : c.json({ error: 'run is not running' }, 409);
+  });
+
   app.get('/api/runs', (c) =>
     c.json(
-      manager.list().map((r) => ({
-        id: r.id,
-        appId: r.appId,
-        status: r.status,
-        createdAt: r.createdAt,
-        coverage: r.ifg?.meta.coverage,
-        rerunnable: Boolean(r.spec),
-      })),
+      // Newest first (createdAt is an ISO string → lexicographic = chronological).
+      [...manager.list()]
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+        .map((r) => ({
+          id: r.id,
+          appId: r.appId,
+          status: r.status,
+          createdAt: r.createdAt,
+          coverage: r.ifg?.meta.coverage,
+          rerunnable: Boolean(r.spec),
+        })),
     ),
   );
 

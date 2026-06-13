@@ -15,6 +15,9 @@ export interface TabItem {
 const NAV_CONTAINER_HINT =
   /(bottomnav|bottom_nav|bottom_bar|bottombar|navigation_?bar|navbar|tabbar|tab_bar|tablayout|uitabbar)/i;
 
+/** Resource-id shapes for an individual bottom-tab item (not the container). */
+const TAB_ITEM_HINT = /(_dest$|_dest_|^tab_|_tab$|nav_item|navitem|navigation|bottomnav)/i;
+
 /**
  * Detect a bottom tab bar on a screen and return its tabs (each is a top-level
  * entry). Two signals, container first then a generic geometric fallback:
@@ -35,8 +38,18 @@ export function detectTabBar(root: UiNode): TabItem[] | undefined {
   let items = container ? clickableLeaves(container) : [];
 
   if (items.length < 2) {
-    // Generic: clickable leaves in the bottom ~18% band, each short (not a
-    // full-height panel), sitting at roughly the same y.
+    // By resource-id: bottom-half clickables whose id looks like a tab
+    // destination. iHerb names them *_dest (cart_dest, explore_dest, …); many
+    // apps use nav_/tab_/navigation. Catches bars the geometry pass misses.
+    const byId = allClickable(root).filter(
+      (n) => TAB_ITEM_HINT.test((n.resourceId ?? '').toLowerCase()) && centerOf(n.bounds!).y > screenH * 0.6,
+    );
+    if (byId.length >= 2) items = byId;
+  }
+
+  if (items.length < 2) {
+    // Generic geometry: clickable leaves in the bottom ~18% band, each short
+    // (not a full-height panel), sitting at roughly the same y.
     const band = clickableLeaves(root).filter((n) => {
       const b = n.bounds!;
       const cy = b.y + b.h / 2;
@@ -101,6 +114,18 @@ function clickableLeaves(root: UiNode): UiNode[] {
   return out;
 }
 
+/** Every clickable node with real bounds (no leaf restriction). */
+function allClickable(root: UiNode): UiNode[] {
+  const out: UiNode[] = [];
+  const walk = (n: UiNode): void => {
+    const b = n.bounds;
+    if (n.clickable && n.enabled !== false && b && b.w > 0 && b.h > 0) out.push(n);
+    n.children.forEach(walk);
+  };
+  walk(root);
+  return out;
+}
+
 /** Keep the largest group of elements sharing roughly one y (within 6% of height). */
 function sameRow(nodes: UiNode[], screenH: number): UiNode[] {
   if (nodes.length < 2) return nodes;
@@ -119,7 +144,26 @@ function centerOf(b: { x: number; y: number; w: number; h: number }): { x: numbe
 }
 
 function labelOf(n: UiNode): string {
-  return (n.text ?? n.contentDesc ?? n.resourceId?.split('/').pop() ?? 'tab').trim();
+  const own = (n.text ?? n.contentDesc ?? '').trim();
+  if (own) return own;
+  // The visible caption ("Home", "Explore") often sits in a child TextView,
+  // while the clickable node itself only carries a resourceId (e.g. home_dest).
+  const caption = findCaption(n);
+  if (caption) return caption;
+  return (n.resourceId?.split('/').pop() ?? 'tab').trim();
+}
+
+/** First short visible text anywhere under a node (breadth-first). */
+function findCaption(n: UiNode): string | undefined {
+  for (const c of n.children) {
+    const t = (c.text ?? c.contentDesc ?? '').trim();
+    if (t && t.length <= 24) return t;
+  }
+  for (const c of n.children) {
+    const deep = findCaption(c);
+    if (deep) return deep;
+  }
+  return undefined;
 }
 
 function toSelector(n: UiNode): Selector {

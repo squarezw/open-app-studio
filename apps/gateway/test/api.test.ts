@@ -57,6 +57,41 @@ describe('gateway API', () => {
     expect((await app.request('/api/runs/nope/layout', { method: 'PUT', body: '{}' })).status).toBe(404);
   });
 
+  it('controls a run: pause → resume → stop', async () => {
+    const { app } = makeApp();
+    const create = await app.request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appId: 'com.tabbed', driver: 'fake', maxActions: 200 }),
+    });
+    const { runId } = (await create.json()) as { runId: string };
+
+    // Pause shortly after launch (while it's still exploring).
+    let paused = false;
+    for (let i = 0; i < 40 && !paused; i++) {
+      const res = await app.request(`/api/runs/${runId}/pause`, { method: 'POST' });
+      if (res.status === 200) {
+        expect((await res.json()) as { status: string }).toMatchObject({ status: 'paused' });
+        paused = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(paused).toBe(true);
+
+    // While paused, status is 'paused'.
+    expect(((await (await app.request(`/api/runs/${runId}`)).json()) as { status: string }).status).toBe('paused');
+
+    // Resume, then stop — the run ends with the graph gathered so far.
+    expect((await app.request(`/api/runs/${runId}/resume`, { method: 'POST' })).status).toBe(200);
+    expect((await app.request(`/api/runs/${runId}/stop`, { method: 'POST' })).status).toBe(200);
+    const final = await waitForDone(app, runId);
+    expect(final.status).toBe('done');
+
+    // Controls are 409 once the run is finished.
+    expect((await app.request(`/api/runs/${runId}/pause`, { method: 'POST' })).status).toBe(409);
+  });
+
   it('creates a fake-driver run and serves the finished IFG', async () => {
     const { app } = makeApp();
     const create = await app.request('/api/runs', {

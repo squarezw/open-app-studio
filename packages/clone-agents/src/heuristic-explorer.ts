@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DeviceDriver } from '@oas/device-bridge';
 import {
@@ -47,6 +48,8 @@ export interface ExploreOptions {
   onEvent?: (event: GraphEvent) => void;
   /** External stop condition, checked once per loop (budget, stall, abort). */
   shouldStop?: (counts: { nodes: number; edges: number; actions: number }) => boolean;
+  /** Awaited at the top of each step; blocks while the run is paused. */
+  waitWhilePaused?: () => Promise<void>;
   /** Decision strategy: which candidate to act on. Defaults to the heuristic policy. */
   decide?: Decider;
   /** High-level goal passed to a goal-directed (LLM) decider. */
@@ -147,11 +150,46 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // Each tab is a top-level entry explored as its own DFS section root.
   let tabBar: TabItem[] | undefined;
   let mainReached = false;
+  // True when the launch screen itself shows the tab bar (no pre-main gate) —
+  // then each tab is entered from the entry by relaunching, so every tab is a
+  // direct child of the app entry rather than of the last section's screen.
+  let entryHasTabBar = false;
   let currentSection: string | undefined;
+  // Title to stamp on the next screen we land on (a tab's home → the tab label).
+  let pendingTabTitle: string | undefined;
+  // After relaunching to the entry, the tab to tap from the entry screen.
+  let pendingTabSwitch: TabItem | undefined;
   const tabsVisited = new Set<string>();
   const preMainNodes: string[] = [];
+  // Every tab selector ever detected, and each node's interactable keys — so we
+  // can back-fill phase: a "pre-main" screen that actually shows the tab bar
+  // (detection just missed it on its frames) is reclassified as main.
+  const tabSelKeysSeen = new Set<string>();
+  const interactablesByNode = new Map<string, Set<string>>();
+
+  // Probe for the bottom tab bar before exploring. The tabbed main UI can take
+  // a beat to render after launch; if we miss it on the first frame we'd treat
+  // a tab as an ordinary button and hop between sections. Once found, every tab
+  // is excluded from free exploration and each becomes its own section root.
+  for (let probe = 0; probe < 3 && !mainReached; probe++) {
+    await driver.waitForIdle();
+    const probed = detectTabBar(await driver.uiTree());
+    if (probed) {
+      tabBar = probed;
+      mainReached = true;
+      entryHasTabBar = true; // launch screen is the tabbed root
+      for (const t of probed) tabSelKeysSeen.add(selectorKey(t.selector));
+      currentSection = probed[0]?.label; // launch lands on the first tab's home
+      pendingTabTitle = probed[0]?.label;
+      if (probed[0]) tabsVisited.add(tabKey(probed[0]));
+      log(`launch UI has a tab bar — ${probed.length} tabs: ${probed.map((t) => t.label).join(', ')}; each tab is a section`);
+    } else if (probe < 2) {
+      await sleep(250);
+    }
+  }
 
   for (let step = 0; step < maxActions; step++) {
+    if (opts.waitWhilePaused) await opts.waitWhilePaused(); // blocks while paused
     const tree = await driver.uiTree();
     const routeHint = await driver.routeHint();
 
@@ -176,6 +214,14 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     let screenshotRef: string | undefined;
     if (opts.outDir) {
       screenshotRef = await driver.screenshot(join(opts.outDir, 'screens', `step_${step}.png`));
+      // Dump the raw UI tree alongside the screenshot — invaluable for debugging
+      // detection (e.g. why a tab bar was missed on a given screen).
+      try {
+        await mkdir(join(opts.outDir, 'trees'), { recursive: true });
+        await writeFile(join(opts.outDir, 'trees', `step_${step}.json`), JSON.stringify(tree));
+      } catch {
+        /* best-effort debug artifact */
+      }
     }
     const nodeId = graph.observe({
       tree,
@@ -193,8 +239,14 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const tabsHere = detectTabBar(tree);
     if (tabsHere) {
       tabBar = tabsHere;
+      for (const t of tabsHere) tabSelKeysSeen.add(selectorKey(t.selector));
       if (!mainReached) {
+        // First tabbed screen reached mid-run (e.g. after login) — it's the
+        // first tab's home; name it after that tab and mark the tab visited.
         mainReached = true;
+        currentSection = tabsHere[0]?.label;
+        if (tabsHere[0]) tabsVisited.add(tabKey(tabsHere[0]));
+        if (tabsHere[0]?.label) graph.setTitle(nodeId, tabsHere[0].label);
         log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
       }
       graph.notePattern(nodeId, { kind: 'tabbar' });
@@ -227,6 +279,33 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       pending = undefined;
     }
 
+    // We just landed on a tab's home screen — name it after the tab ("Home",
+    // "Explore", …) instead of the generic top-text guess.
+    if (pendingTabTitle) {
+      graph.setTitle(nodeId, pendingTabTitle);
+      pendingTabTitle = undefined;
+    }
+
+    // Just relaunched to the app entry to enter the next tab — tap it from here,
+    // so the edge is entry → tab (each tab a direct child of the entry).
+    if (pendingTabSwitch) {
+      const tab = pendingTabSwitch;
+      pendingTabSwitch = undefined;
+      currentSection = tab.label;
+      pendingTabTitle = tab.label;
+      graph.markTried(nodeId, tab.selector);
+      log(`[${step}] entering tab "${tab.label}" from entry ${nodeId}`);
+      await driver.tap(tab.center);
+      pending = {
+        fromId: nodeId,
+        action: { kind: 'tap', selector: tab.selector, point: tab.center },
+        signature: signatureOf(tab.selector),
+      };
+      history.push(`${guessTitle(tree) ?? nodeId} → tab ${tab.label}`);
+      await driver.waitForIdle();
+      continue;
+    }
+
     if (sameNodeStreak >= 12) {
       log(`[${step}] stuck on one screen for ${sameNodeStreak} steps — stopping`);
       break;
@@ -239,7 +318,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
 
     const screenHeight = tree.bounds?.h ?? 2400;
     const interactables = collectInteractables(tree);
-    for (const i of interactables) graph.noteInteractable(nodeId, i.selector);
+    let nodeKeys = interactablesByNode.get(nodeId);
+    if (!nodeKeys) {
+      nodeKeys = new Set();
+      interactablesByNode.set(nodeId, nodeKeys);
+    }
+    for (const i of interactables) {
+      graph.noteInteractable(nodeId, i.selector);
+      nodeKeys.add(selectorKey(i.selector));
+    }
     const editableFields = interactables.filter((i) => i.editable);
 
     // Build scored candidates from untried interactables, pruning recurring
@@ -319,15 +406,14 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       continue;
     }
 
-    // Tab bars are driven explicitly (one section at a time), not as ordinary
-    // candidates — keep them out of in-section exploration so a section is
-    // exhausted before we switch tabs.
-    const tabSelKeys = new Set((tabBar ?? []).map((t) => selectorKey(t.selector)));
-
     const candidates: Candidate[] = [];
     for (const cand of interactables) {
       if (!untriedKeys.has(selectorKey(cand.selector))) continue;
-      if (tabSelKeys.has(selectorKey(cand.selector))) {
+      // Tabs are top-level entries driven explicitly (one section at a time),
+      // never tapped as ordinary candidates — otherwise free exploration would
+      // hop from one bar to another. Excluded by the accumulated tab-selector
+      // set, so this holds even on a screen where detection missed the bar.
+      if (tabSelKeysSeen.has(selectorKey(cand.selector))) {
         graph.markTried(nodeId, cand.selector);
         continue;
       }
@@ -421,11 +507,31 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     // entry. When the decider would back out of (or stop on) an exhausted
     // section, jump to the next unvisited tab instead — so each section is
     // explored as its own DFS root before the run ends.
-    if (mainReached && tabsHere && (decision.act === 'back' || decision.act === 'stop')) {
-      const nextTab = tabsHere.find((t) => !tabsVisited.has(tabKey(t)));
+    // The current screen shows the tab bar if detection found it, or (when
+    // detection missed it) if this node's interactables include ≥2 known tabs.
+    const screenShowsTabBar =
+      tabsHere !== undefined ||
+      (nodeKeys ? [...tabSelKeysSeen].filter((k) => nodeKeys!.has(k)).length >= 2 : false);
+    if (mainReached && tabBar && screenShowsTabBar && (decision.act === 'back' || decision.act === 'stop')) {
+      const nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
       if (nextTab) {
         tabsVisited.add(tabKey(nextTab));
+        consecutiveBacks = 0;
+        if (entryHasTabBar) {
+          // Enter the tab from the app entry: relaunch to the tabbed root, then
+          // tap the tab from there (next loop) so it's a direct child of the
+          // entry — not of whatever screen this section happened to end on.
+          log(`[${step}] section "${currentSection ?? ''}" done — relaunch & enter "${nextTab.label}" from the app entry`);
+          pendingTabSwitch = nextTab;
+          pending = undefined;
+          await driver.launch(opts.appId);
+          await driver.waitForIdle();
+          continue;
+        }
+        // Pre-main-gated app: relaunch wouldn't land on the tabs, so switch from
+        // the current screen (best-effort until pre-main replay lands).
         currentSection = nextTab.label;
+        pendingTabTitle = nextTab.label;
         graph.markTried(nodeId, nextTab.selector);
         log(`[${step}] ${nodeId} section done — switch to tab "${nextTab.label}"`);
         await driver.tap(nextTab.center);
@@ -435,7 +541,6 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
           signature: signatureOf(nextTab.selector),
         };
         history.push(`${title ?? nodeId} → tab ${nextTab.label}`);
-        consecutiveBacks = 0;
         await driver.waitForIdle();
         continue;
       }
@@ -492,9 +597,29 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     await driver.waitForIdle();
   }
 
-  // Only commit pre-main tags if a tabbed main UI was actually found. Apps with
-  // no tab bar are free-explored and carry no phase concept.
-  if (mainReached) for (const id of preMainNodes) graph.markPhase(id, 'pre-main');
+  // Commit phase tags only if a tabbed main UI was found (no tab bar → free
+  // exploration, no phase concept). A "pre-main" candidate that actually shows
+  // the tab bar — detection just missed it on this screen's frames — is really
+  // a main screen; reclassify it by checking its interactables against every
+  // tab selector we ever saw.
+  if (mainReached) {
+    const firstTabLabel = tabBar?.[0]?.label;
+    for (const id of preMainNodes) {
+      const keys = interactablesByNode.get(id);
+      const tabHits = keys ? [...tabSelKeysSeen].filter((k) => keys.has(k)).length : 0;
+      if (tabHits >= 2) {
+        graph.markPhase(id, 'main');
+        graph.notePattern(id, { kind: 'tabbar' });
+        // The launch landing is the first tab's home — name it after that tab.
+        if (id === launchNodeId && firstTabLabel) {
+          graph.setTitle(id, firstTabLabel);
+          graph.markSection(id, firstTabLabel);
+        }
+      } else {
+        graph.markPhase(id, 'pre-main');
+      }
+    }
+  }
 
   return graph.toIFG();
 }

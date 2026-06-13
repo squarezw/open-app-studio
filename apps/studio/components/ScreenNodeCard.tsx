@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { GATEWAY_URL } from '../lib/gateway';
+import type { TapMarker } from '../lib/ifg-to-flow';
 
 interface ScreenData {
   title: string;
@@ -11,11 +13,17 @@ interface ScreenData {
   phase?: 'pre-main' | 'main';
   section?: string;
   hasTabbar?: boolean;
+  taps?: TapMarker[];
+  showTaps?: boolean;
+  /** When a flow/edge is selected, only its tap markers show (others hidden). */
+  highlightEdges?: Set<string>;
 }
 
 export default function ScreenNodeCard({ data }: NodeProps) {
   const d = data as unknown as ScreenData;
   const src = d.screenshotUrl?.startsWith('/api/') ? `${GATEWAY_URL}${d.screenshotUrl}` : d.screenshotUrl;
+  // Natural (device) pixel size of the screenshot, to map tap coords → overlay %.
+  const [nat, setNat] = useState<{ w: number; h: number }>();
   return (
     <div className="screen-node" data-role={d.role ?? 'other'} data-phase={d.phase ?? ''}>
       {(d.phase === 'pre-main' || d.hasTabbar || d.section) && (
@@ -26,8 +34,26 @@ export default function ScreenNodeCard({ data }: NodeProps) {
         </div>
       )}
       {src && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={d.title} />
+        <div className="shot">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={d.title}
+            onLoad={(e) => setNat({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          />
+          {d.showTaps &&
+            nat &&
+            d.taps
+              ?.filter((t) => !d.highlightEdges || d.highlightEdges.has(t.edgeId))
+              .map((t, i) => (
+                <span
+                  key={i}
+                  className="tap-marker"
+                  style={{ left: `${(t.x / nat.w) * 100}%`, top: `${(t.y / nat.h) * 100}%` }}
+                  title={t.label}
+                />
+              ))}
+        </div>
       )}
       <div className="title">{d.title}</div>
       <div className="meta">

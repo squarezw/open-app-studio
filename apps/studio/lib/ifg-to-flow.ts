@@ -9,6 +9,14 @@ import type { ActionEdge, InteractionFlowGraph, ScreenNode } from '@oas/flow-gra
 export type PartialIfg = Pick<InteractionFlowGraph, 'nodes' | 'edges'> &
   Partial<Pick<InteractionFlowGraph, 'flows' | 'meta' | 'frontier'>>;
 
+/** A point that was tapped on this screen (device coords) + where it led. */
+export interface TapMarker {
+  x: number;
+  y: number;
+  label: string;
+  edgeId: string;
+}
+
 export interface FlowNode {
   id: string;
   type: 'screen';
@@ -21,6 +29,8 @@ export interface FlowNode {
     phase?: 'pre-main' | 'main';
     section?: string;
     hasTabbar?: boolean;
+    /** Tap points originating from this screen, for the click-region overlay. */
+    taps?: TapMarker[];
   };
 }
 
@@ -33,12 +43,30 @@ export interface FlowEdge {
   isBack: boolean;
 }
 
-const COL_W = 300;
-const ROW_H = 150;
+export function ifgToFlow(
+  ifg: PartialIfg,
+  opts: { showImages?: boolean } = {},
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const showImages = opts.showImages ?? true;
+  // With screenshots the cards are tall (phone aspect) — space rows out so they
+  // don't overlap. Without screenshots they're compact, so pack them tighter.
+  const COL_W = showImages ? 320 : 240;
+  const ROW_H = showImages ? 380 : 96;
 
-export function ifgToFlow(ifg: PartialIfg): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const depth = layerByBfs(ifg);
   const rows = new Map<number, number>();
+
+  // Tap points per screen (device coords) — "what region was tapped, and where
+  // it led". Back/scroll have no meaningful point.
+  const titleById = new Map(ifg.nodes.map((n) => [n.id, n.title ?? n.id]));
+  const tapsByNode = new Map<string, TapMarker[]>();
+  for (const e of ifg.edges) {
+    const p = e.action.point;
+    if (!p || e.action.kind === 'back' || e.action.kind === 'scroll') continue;
+    const arr = tapsByNode.get(e.from) ?? [];
+    arr.push({ x: p.x, y: p.y, label: `${edgeLabel(e)} → ${titleById.get(e.to) ?? e.to}`, edgeId: e.id });
+    tapsByNode.set(e.from, arr);
+  }
 
   const nodes = ifg.nodes.map((n) => {
     const d = depth.get(n.id) ?? 0;
@@ -52,10 +80,11 @@ export function ifgToFlow(ifg: PartialIfg): { nodes: FlowNode[]; edges: FlowEdge
         title: n.title ?? n.id,
         role: n.role,
         visits: n.visits ?? 0,
-        screenshotUrl: firstHttpScreenshot(n),
+        screenshotUrl: showImages ? firstHttpScreenshot(n) : undefined,
         phase: n.phase,
         section: n.section,
         hasTabbar: n.patterns?.some((p) => p.kind === 'tabbar'),
+        taps: tapsByNode.get(n.id),
       },
     };
   });
