@@ -14,6 +14,7 @@ import {
 } from '@oas/flow-graph';
 import { scoreCandidate, signatureOf } from './policy.js';
 import { detectTabBar, tabKey, type TabItem } from './tabbar.js';
+import type { VlmAnalyzers } from './entry-analyzer.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -54,6 +55,8 @@ export interface ExploreOptions {
   decide?: Decider;
   /** High-level goal passed to a goal-directed (LLM) decider. */
   goal?: string;
+  /** Vision analyzers (entry / stuck). When set, the entry screen is analyzed by a VLM. */
+  vlm?: VlmAnalyzers;
 }
 
 interface Interactable {
@@ -166,6 +169,34 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // (detection just missed it on its frames) is reclassified as main.
   const tabSelKeysSeen = new Set<string>();
   const interactablesByNode = new Map<string, Set<string>>();
+
+  // Vision-first entry analysis: a VLM actually *sees* the screen, so it
+  // recognizes the tab bar and tab labels reliably where blind geometry/id
+  // heuristics fail. Done once, up front. Falls through to the geometric probe
+  // when no VLM is configured or it can't resolve operable selectors.
+  if (opts.vlm && opts.outDir) {
+    try {
+      await driver.waitForIdle();
+      const shot = await driver.screenshot(join(opts.outDir, 'screens', 'entry.png'));
+      const tree0 = await driver.uiTree();
+      const { analysis, tabs } = await opts.vlm.analyzeEntry(shot, tree0);
+      log(
+        `[entry] VLM: ${analysis.appType}, tabbar=${analysis.hasTabBar}` +
+          (analysis.tabs?.length ? ` — ${analysis.tabs.join(', ')}` : ''),
+      );
+      if (tabs && tabs.length >= 2) {
+        tabBar = tabs;
+        mainReached = true;
+        entryHasTabBar = true;
+        for (const t of tabs) tabSelKeysSeen.add(selectorKey(t.selector));
+        currentSection = tabs[0]?.label;
+        pendingTabTitle = tabs[0]?.label;
+        if (tabs[0]) tabsVisited.add(tabKey(tabs[0]));
+      }
+    } catch (err) {
+      log(`[entry] VLM analysis skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // Probe for the bottom tab bar before exploring. The tabbed main UI can take
   // a beat to render after launch; if we miss it on the first frame we'd treat

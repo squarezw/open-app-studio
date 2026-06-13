@@ -9,9 +9,20 @@
  *   OAS_LLM_MODEL     — default deepseek-chat
  */
 
+/** A part of a multimodal message (OpenAI-compatible vision format). */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  /** Plain text, or multimodal parts (text + images) for vision models. */
+  content: string | ContentPart[];
+}
+
+/** Wrap a base64-encoded PNG as an image content part (a data URL). */
+export function imagePart(base64Png: string): ContentPart {
+  return { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Png}` } };
 }
 
 export interface LlmConfig {

@@ -6,9 +6,11 @@ import { compileBlueprint } from '@oas/app-spec';
 import {
   fetchStoreMetadata,
   makeLlmDecider,
+  makeVlmAnalyzers,
   parseStoreUrl,
   provisionalIfgFromMetadata,
   type Decider,
+  type VlmAnalyzers,
 } from '@oas/clone-agents';
 import {
   AdbDriver,
@@ -48,6 +50,8 @@ export interface AppDeps {
   generate?: (prompt: string) => Promise<GenerateResult>;
   /** Injectable for tests; builds the exploration brain. Defaults to env-configured LLM, else heuristic. */
   makeDecider?: (appName?: string) => { decide?: Decider; goal?: string; brain: 'llm' | 'heuristic' };
+  /** Injectable for tests; builds the vision analyzers. Defaults to env-configured Qwen-VL, else none. */
+  makeVlm?: () => VlmAnalyzers | undefined;
   /** Where per-run artifacts (screens/, report.md, ifg.json) are written. Enables the screenshot route. */
   runsDir?: string;
 }
@@ -99,6 +103,8 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       stallThreshold: spec.stallThreshold,
       decide: brainSetup.decide,
       goal: brainSetup.goal,
+      // Vision entry analysis when OAS_VLM_* is configured (real device runs).
+      vlm: deps.makeVlm ? deps.makeVlm() : makeVlmAnalyzers(),
     });
     return { runId: record.id, brain: brainSetup.brain };
   }

@@ -3,6 +3,7 @@ import type { DeviceDriver } from '@oas/device-bridge';
 import type { GraphEvent, InteractionFlowGraph, Platform } from '@oas/flow-graph';
 import { annotate, deriveFlows, deriveLeafFlows } from './annotator.js';
 import { explore, type Decider } from './heuristic-explorer.js';
+import type { VlmAnalyzers } from './entry-analyzer.js';
 
 /**
  * Owns one clone run end-to-end: exploration (with budget + stall stop
@@ -31,6 +32,8 @@ export interface CloneRunOptions {
   decide?: Decider;
   /** High-level goal for a goal-directed decider. */
   goal?: string;
+  /** Vision analyzers (entry-screen analysis); omit to use heuristics only. */
+  vlm?: VlmAnalyzers;
 }
 
 export class Orchestrator extends EventEmitter {
@@ -73,6 +76,7 @@ export class Orchestrator extends EventEmitter {
         outDir: this.opts.outDir,
         decide: this.opts.decide,
         goal: this.opts.goal,
+        vlm: this.opts.vlm,
         log: (m) => this.emit('log', m),
         onEvent: (event: GraphEvent) => {
           if (event.type === 'node' && event.isNew) lastDiscoveryAction = latestActions;
