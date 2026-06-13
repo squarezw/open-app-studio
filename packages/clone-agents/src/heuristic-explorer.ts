@@ -148,8 +148,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   let tabBar: TabItem[] | undefined;
   let mainReached = false;
   let currentSection: string | undefined;
+  // Title to stamp on the next screen we land on (a tab's home → the tab label).
+  let pendingTabTitle: string | undefined;
   const tabsVisited = new Set<string>();
   const preMainNodes: string[] = [];
+  // Every tab selector ever detected, and each node's interactable keys — so we
+  // can back-fill phase: a "pre-main" screen that actually shows the tab bar
+  // (detection just missed it on its frames) is reclassified as main.
+  const tabSelKeysSeen = new Set<string>();
+  const interactablesByNode = new Map<string, Set<string>>();
 
   for (let step = 0; step < maxActions; step++) {
     const tree = await driver.uiTree();
@@ -193,6 +200,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const tabsHere = detectTabBar(tree);
     if (tabsHere) {
       tabBar = tabsHere;
+      for (const t of tabsHere) tabSelKeysSeen.add(selectorKey(t.selector));
       if (!mainReached) {
         mainReached = true;
         log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
@@ -227,6 +235,13 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       pending = undefined;
     }
 
+    // We just landed on a tab's home screen — name it after the tab ("Home",
+    // "Explore", …) instead of the generic top-text guess.
+    if (pendingTabTitle) {
+      graph.setTitle(nodeId, pendingTabTitle);
+      pendingTabTitle = undefined;
+    }
+
     if (sameNodeStreak >= 12) {
       log(`[${step}] stuck on one screen for ${sameNodeStreak} steps — stopping`);
       break;
@@ -239,7 +254,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
 
     const screenHeight = tree.bounds?.h ?? 2400;
     const interactables = collectInteractables(tree);
-    for (const i of interactables) graph.noteInteractable(nodeId, i.selector);
+    let nodeKeys = interactablesByNode.get(nodeId);
+    if (!nodeKeys) {
+      nodeKeys = new Set();
+      interactablesByNode.set(nodeId, nodeKeys);
+    }
+    for (const i of interactables) {
+      graph.noteInteractable(nodeId, i.selector);
+      nodeKeys.add(selectorKey(i.selector));
+    }
     const editableFields = interactables.filter((i) => i.editable);
 
     // Build scored candidates from untried interactables, pruning recurring
@@ -426,6 +449,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       if (nextTab) {
         tabsVisited.add(tabKey(nextTab));
         currentSection = nextTab.label;
+        pendingTabTitle = nextTab.label; // name the tab's home after the tab
         graph.markTried(nodeId, nextTab.selector);
         log(`[${step}] ${nodeId} section done — switch to tab "${nextTab.label}"`);
         await driver.tap(nextTab.center);
@@ -492,9 +516,29 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     await driver.waitForIdle();
   }
 
-  // Only commit pre-main tags if a tabbed main UI was actually found. Apps with
-  // no tab bar are free-explored and carry no phase concept.
-  if (mainReached) for (const id of preMainNodes) graph.markPhase(id, 'pre-main');
+  // Commit phase tags only if a tabbed main UI was found (no tab bar → free
+  // exploration, no phase concept). A "pre-main" candidate that actually shows
+  // the tab bar — detection just missed it on this screen's frames — is really
+  // a main screen; reclassify it by checking its interactables against every
+  // tab selector we ever saw.
+  if (mainReached) {
+    const firstTabLabel = tabBar?.[0]?.label;
+    for (const id of preMainNodes) {
+      const keys = interactablesByNode.get(id);
+      const tabHits = keys ? [...tabSelKeysSeen].filter((k) => keys.has(k)).length : 0;
+      if (tabHits >= 2) {
+        graph.markPhase(id, 'main');
+        graph.notePattern(id, { kind: 'tabbar' });
+        // The launch landing is the first tab's home — name it after that tab.
+        if (id === launchNodeId && firstTabLabel) {
+          graph.setTitle(id, firstTabLabel);
+          graph.markSection(id, firstTabLabel);
+        }
+      } else {
+        graph.markPhase(id, 'pre-main');
+      }
+    }
+  }
 
   return graph.toIFG();
 }

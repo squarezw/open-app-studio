@@ -143,6 +143,12 @@ export class GraphBuilder {
     if (node && !node.section) node.section = section;
   }
 
+  /** Overrides a screen's title (e.g. naming a tab's home after the tab). */
+  setTitle(nodeId: string, title: string): void {
+    const node = this.nodeById(nodeId);
+    if (node) node.title = title;
+  }
+
   /** Adds a component pattern (e.g. the detected tabbar) to a node, deduped by kind+region. */
   notePattern(nodeId: string, pattern: ComponentPattern): void {
     const node = this.nodeById(nodeId);

@@ -119,7 +119,26 @@ function centerOf(b: { x: number; y: number; w: number; h: number }): { x: numbe
 }
 
 function labelOf(n: UiNode): string {
-  return (n.text ?? n.contentDesc ?? n.resourceId?.split('/').pop() ?? 'tab').trim();
+  const own = (n.text ?? n.contentDesc ?? '').trim();
+  if (own) return own;
+  // The visible caption ("Home", "Explore") often sits in a child TextView,
+  // while the clickable node itself only carries a resourceId (e.g. home_dest).
+  const caption = findCaption(n);
+  if (caption) return caption;
+  return (n.resourceId?.split('/').pop() ?? 'tab').trim();
+}
+
+/** First short visible text anywhere under a node (breadth-first). */
+function findCaption(n: UiNode): string | undefined {
+  for (const c of n.children) {
+    const t = (c.text ?? c.contentDesc ?? '').trim();
+    if (t && t.length <= 24) return t;
+  }
+  for (const c of n.children) {
+    const deep = findCaption(c);
+    if (deep) return deep;
+  }
+  return undefined;
 }
 
 function toSelector(n: UiNode): Selector {

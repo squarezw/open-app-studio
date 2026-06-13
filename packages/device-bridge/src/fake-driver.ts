@@ -217,3 +217,49 @@ export const DEMO_TABBED_APP: FakeApp = {
     tprofile: { ...NAV },
   },
 };
+
+/** A bottom tab whose caption sits in a child TextView (no text/contentDesc on
+ * the clickable node itself) — exercises caption extraction in detectTabBar. */
+function captionedTab(resourceId: string, caption: string, x: number, y: number): UiNode {
+  return {
+    className: 'android.widget.FrameLayout',
+    resourceId,
+    clickable: true,
+    enabled: true,
+    bounds: { x, y, w: 240, h: 120 },
+    children: [
+      { className: 'android.widget.ImageView', bounds: { x: x + 90, y: y + 10, w: 60, h: 60 }, children: [] },
+      { className: 'android.widget.TextView', text: caption, bounds: { x, y: y + 72, w: 240, h: 36 }, children: [] },
+    ],
+  };
+}
+
+/**
+ * Tabbed app where the home screen's tab bar sits a little high, so the
+ * geometric detector misses it on that screen, but the detail screen's bar is
+ * at the bottom and detects fine. Both screens share the same tab selectors —
+ * exercises the back-fill that reclassifies home from pre-main to main.
+ * Tab captions live in child TextViews (no resourceId-only labels).
+ */
+export const DEMO_LATE_TABBAR_APP: FakeApp = {
+  initial: 'home',
+  screens: {
+    home: screen('home', [
+      title('Welcome Home'),
+      btn('com.late:id/btn_open', 'Open', 400),
+      // y=1850 → center ~0.80 of height, just above the bottom band → missed
+      captionedTab('com.late:id/tab_feed', 'Feed', 0, 1850),
+      captionedTab('com.late:id/tab_browse', 'Browse', 300, 1850),
+      captionedTab('com.late:id/tab_me', 'Me', 600, 1850),
+    ]),
+    detail: screen('detail', [
+      title('Detail'),
+      captionedTab('com.late:id/tab_feed', 'Feed', 0, 2280),
+      captionedTab('com.late:id/tab_browse', 'Browse', 300, 2280),
+      captionedTab('com.late:id/tab_me', 'Me', 600, 2280),
+    ]),
+  },
+  transitions: {
+    home: { 'com.late:id/btn_open': 'detail' },
+  },
+};
