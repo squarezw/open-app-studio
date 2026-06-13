@@ -90,7 +90,8 @@ export default function RunView({ id }: { id: string }) {
     };
   }, [id]);
 
-  // Esc clears the focused flow/edge (back to the full graph).
+  // Esc clears the focused flow/edge (back to the full graph). Capture phase so
+  // it fires even when the React Flow pane has focus and would swallow the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -98,8 +99,8 @@ export default function RunView({ id }: { id: string }) {
         setSelectedEdge(undefined);
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
   const highlight = useMemo(() => {
