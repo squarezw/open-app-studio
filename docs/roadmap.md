@@ -47,6 +47,13 @@ The riskiest assumption is **Stage 1 exploration**: can an agent reliably drive 
 - [ ] Release tracking in Studio; OTA updates
 - **Demo**: canvas → signed Android build → Play internal-testing track, end to end from Studio.
 
+## Device backend & explorer policy (research-backed — see [device-backend-research.md](./device-backend-research.md))
+
+- [ ] Phase 0: benchmark harness — OAS pain cases (text-replace, keyboard detect, long scroll, dropdown wait, dup resourceId, time/cost) runnable against any `DeviceDriver`; baseline the current `AdbDriver`
+- [ ] Phase 1: `AppiumDriver` adapter (UiAutomator2) prototype → head-to-head vs adb; adopt as primary only if it wins the scorecard
+- [ ] Phase 2 (higher leverage, backend-agnostic): hierarchical-JSON tree to the LLM, element enrichment for dup-resourceId (AppAgent v2), LLM-maintains-graph + cheap action selection (LLM-Explorer, ~148× cheaper), Reflector-style loop check, resume/extend a run (Fastbot2-style)
+- [ ] Phase 3: iOS via `XcuitestDriver` / mobile-mcp behind the same interface; Maestro for cross-platform replay
+
 ## Later
 
 - Parallel device farm at scale; cloud-hosted exploration
