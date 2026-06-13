@@ -25,40 +25,48 @@ export default function FlowCanvas({
 }) {
   const instance = useRef<ReactFlowInstance | null>(null);
 
-  const { nodes, edges } = useMemo(() => {
-    const flow = ifgToFlow(graph);
-    const rfNodes: Node[] = flow.nodes;
-    const rfEdges: Edge[] = flow.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      // Back edges stay unlabeled — their labels collide with the forward
-      // edge between the same node pair, and "back" carries no information.
-      label: e.isBack ? undefined : e.label,
-      animated: highlight ? highlight.has(e.id) : e.animated,
-      style: highlight?.has(e.id)
-        ? { stroke: '#ff5370', strokeWidth: 2.5 }
-        : e.isBack
-          ? { stroke: '#3a4458', strokeDasharray: '5 5' }
-          : { stroke: '#5a6a8a' },
-      labelStyle: { fill: '#8b9cbd', fontSize: 10 },
-      labelBgStyle: { fill: '#0b0e14', fillOpacity: 0.85 },
-    }));
-    return { nodes: rfNodes, edges: rfEdges };
-  }, [graph, highlight]);
-
-  // Node ids touched by the highlighted (selected-flow) edges.
+  // Node ids on the highlighted (selected) flow — its edges' endpoints.
   const highlightedNodeIds = useMemo(() => {
     if (!highlight || highlight.size === 0) return undefined;
     const ids = new Set<string>();
-    for (const e of edges) {
+    for (const e of ifgToFlow(graph).edges) {
       if (highlight.has(e.id)) {
         ids.add(e.source);
         ids.add(e.target);
       }
     }
     return ids;
-  }, [edges, highlight]);
+  }, [graph, highlight]);
+
+  const { nodes, edges } = useMemo(() => {
+    const flow = ifgToFlow(graph);
+    const dim = highlightedNodeIds !== undefined; // a flow is selected → spotlight it
+    const rfNodes: Node[] = flow.nodes.map((n) => ({
+      ...n,
+      // Dim every node that isn't on the selected flow so the route stands out.
+      style: { opacity: dim && !highlightedNodeIds!.has(n.id) ? 0.18 : 1, transition: 'opacity 200ms' },
+    }));
+    const rfEdges: Edge[] = flow.edges.map((e) => {
+      const on = highlight?.has(e.id) ?? false;
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: e.isBack ? undefined : e.label,
+        animated: on,
+        style: on
+          ? { stroke: '#ff5370', strokeWidth: 2.5 }
+          : {
+              stroke: e.isBack ? '#3a4458' : '#5a6a8a',
+              ...(e.isBack ? { strokeDasharray: '5 5' } : {}),
+              opacity: dim ? 0.1 : 1, // fade non-flow edges when a flow is selected
+            },
+        labelStyle: { fill: '#8b9cbd', fontSize: 10, opacity: dim && !on ? 0.1 : 1 },
+        labelBgStyle: { fill: '#0b0e14', fillOpacity: 0.85 },
+      };
+    });
+    return { nodes: rfNodes, edges: rfEdges };
+  }, [graph, highlight, highlightedNodeIds]);
 
   // Re-fit when the node count changes. A finished run loads all nodes in one
   // batch AFTER mount, so the initial `fitView` (which ran on an empty graph)

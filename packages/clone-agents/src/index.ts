@@ -14,6 +14,6 @@ export { runDeviceBenchmark, renderScorecard } from './benchmark.js';
 export type { Scorecard, ProbeResult, ProbeStatus } from './benchmark.js';
 export { Orchestrator } from './orchestrator.js';
 export type { CloneRunOptions } from './orchestrator.js';
-export { annotate, deriveFlows } from './annotator.js';
+export { annotate, deriveFlows, deriveLeafFlows } from './annotator.js';
 export { parseStoreUrl, fetchStoreMetadata, provisionalIfgFromMetadata } from './acquirer.js';
 export type { StoreRef, StoreMetadata } from './acquirer.js';
