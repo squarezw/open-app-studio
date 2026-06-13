@@ -4,7 +4,7 @@ import addFormats from 'ajv-formats';
 import { describe, expect, it } from 'vitest';
 import type { DeviceDriver } from '@oas/device-bridge';
 import type { Point, UiNode } from '@oas/flow-graph';
-import { collectInteractables, explore, synthesizeInput } from '../src/heuristic-explorer.js';
+import { collectInteractables, explore, pickFirstOption, synthesizeInput } from '../src/heuristic-explorer.js';
 
 /**
  * A fake 5-screen app:
@@ -170,6 +170,64 @@ describe('heuristic explorer (integration, fake device)', () => {
   });
 });
 
+describe('bounded scrolling', () => {
+  const scrollList = (root: UiNode, children: UiNode[]): UiNode => ({
+    className: 'screen.page',
+    bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+    children: [{ className: 'androidx.recyclerview.widget.RecyclerView', scrollable: true, bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children, ...root }],
+  });
+  const leaf = (id: string, y: number): UiNode => ({
+    className: 'android.widget.Button', resourceId: id, text: id, clickable: true, enabled: true,
+    bounds: { x: 0, y, w: 1080, h: 120 }, children: [],
+  });
+
+  const terminal: UiNode = { className: 'screen.done', bounds: { x: 0, y: 0, w: 1080, h: 2400 }, children: [] };
+
+  function makeDriver(pageFor: (scrollPos: number) => UiNode) {
+    let pos = 0;
+    let left = false;
+    const swipes: number[] = [];
+    const driver: DeviceDriver = {
+      async launch() { pos = 0; left = false; },
+      async uiTree() { return left ? terminal : pageFor(pos); },
+      async tap() {},
+      async swipe() { swipes.push(pos); pos += 1; },
+      async type() {}, async clearText() {}, async pressEnter() {},
+      async isKeyboardShown() { return false; }, async dismissKeyboard() {},
+      async back() { left = true; }, // back leaves the page (realistic)
+      async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return undefined; },
+      async waitForIdle() {},
+    };
+    return { driver, swipes: () => swipes };
+  }
+
+  it('scrolls a long page through its distinct sections, then stops at the bottom', async () => {
+    // 3 distinct sections (pos 0,1,2); pos>=2 keeps returning the last section
+    // = bottom reached (structure stops changing → scrollExhausted).
+    const { driver, swipes } = makeDriver((pos) => {
+      const p = Math.min(pos, 2);
+      return scrollList({}, [leaf(`sec${p}_a`, 200), leaf(`sec${p}_b`, 400)]);
+    });
+    await explore(driver, { appId: 'com.x', maxActions: 30 });
+    // scrolled through ~3 sections then stopped — never runs away
+    expect(swipes().length).toBeGreaterThanOrEqual(2);
+    expect(swipes().length).toBeLessThanOrEqual(4);
+  });
+
+  it('stops scrolling an infinite feed after one no-op scroll (stable fingerprint)', async () => {
+    // Structure is identical at every scroll position (an infinite feed):
+    // content-invariant fingerprint never changes → scroll reveals "nothing
+    // new" → marked exhausted → at most one scroll attempt.
+    const { driver, swipes } = makeDriver(() =>
+      scrollList({}, [leaf('feed_row', 200), leaf('feed_row', 400)]),
+    );
+    await explore(driver, { appId: 'com.x', maxActions: 30 });
+    expect(swipes().length).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('text input handling', () => {
   it('detects EditText and search fields as editable', () => {
     const screen: UiNode = {
@@ -202,32 +260,44 @@ describe('text input handling', () => {
     expect(synthesizeInput('some other field')).toBe('test');
   });
 
-  it('fills ALL fields of a multi-field form before submitting (no per-field back)', async () => {
-    const field = (id: string, desc: string, y: number): UiNode => ({
-      className: 'android.widget.EditText', resourceId: id, contentDesc: desc, clickable: true, enabled: true,
-      bounds: { x: 0, y, w: 1080, h: 110 }, children: [],
-    });
-    const form: UiNode = {
+  it('fills every text field, skips dropdowns, dedups by typed value (no per-field back)', async () => {
+    // A stateful form mirroring iHerb: ALL fields share one resourceId, the
+    // label lives in `text`, dropdowns are focusable:false, and typing updates
+    // the field's visible text (so dedup-by-current-text works like a real device).
+    const labels = [
+      { label: 'United States', focusable: false }, // Country dropdown — must be skipped
+      { label: 'Full Name *', focusable: true },
+      { label: 'Address Line 1 *', focusable: true },
+      { label: 'State / Region *', focusable: false }, // State dropdown — skipped
+      { label: 'Zip / Postal Code *', focusable: true },
+    ];
+    const values = labels.map((l) => l.label); // mutated as we "type"
+    const typed: string[] = [];
+    let backs = 0;
+    const buildTree = (): UiNode => ({
       className: 'screen.address_form',
       bounds: { x: 0, y: 0, w: 1080, h: 2400 },
-      children: [
-        field('com.x:id/name', 'Full Name', 200),
-        field('com.x:id/addr', 'Address Line 1', 340),
-        field('com.x:id/zip', 'Zip / Postal Code', 480),
-        { className: 'android.widget.Button', resourceId: 'com.x:id/continue', text: 'Continue', clickable: true, enabled: true, bounds: { x: 0, y: 2200, w: 1080, h: 150 }, children: [] },
-      ],
-    };
-    const typed: Array<{ value: string }> = [];
-    let backs = 0;
-    let dismisses = 0;
+      children: labels.map((l, i) => ({
+        className: 'android.widget.EditText',
+        resourceId: 'com.x:id/input_edit_text', // shared id, like iHerb
+        text: values[i],
+        focusable: l.focusable,
+        clickable: true,
+        enabled: true,
+        bounds: { x: 0, y: 200 + i * 160, w: 1080, h: 120 },
+        children: [],
+      })),
+    });
+    let focused = -1;
     const driver: DeviceDriver = {
       async launch() {},
-      async uiTree() { return form; },
-      async tap() {},
-      async type(t: string) { typed.push({ value: t }); },
-      async pressEnter() {},
+      async uiTree() { return buildTree(); },
+      async tap(p) { focused = Math.round((p.y - 260) / 160); },
+      async type(t: string) { typed.push(t); if (focused >= 0) values[focused] = t; },
       async clearText() {},
-      async dismissKeyboard() { dismisses += 1; },
+      async pressEnter() {},
+      async isKeyboardShown() { return true; },
+      async dismissKeyboard() {},
       async back() { backs += 1; },
       async swipe() {}, async deepLink() {},
       async screenshot(p: string) { return p; },
@@ -235,12 +305,107 @@ describe('text input handling', () => {
       async waitForIdle() {},
     };
 
-    await explore(driver, { appId: 'com.x', maxActions: 2 });
-    // all three fields filled by their own hint, in one form-fill step
-    expect(typed.map((t) => t.value)).toEqual(['Test User', '123 Main St', '10001']);
-    // keyboard closed via dismissKeyboard (safe), NEVER raw back — so no leave dialog
-    expect(dismisses).toBeGreaterThanOrEqual(1);
+    await explore(driver, { appId: 'com.x', maxActions: 1 });
+    // The 3 focusable text fields get filled by their label; the 2 dropdowns are skipped.
+    expect(typed).toEqual(['Test User', '123 Main St', '10001']);
+    // the fill itself never presses a raw back — so no "discard changes?" dialog
     expect(backs).toBe(0);
+  });
+
+  it('pickFirstOption picks a real list option, skipping search/cancel/header', () => {
+    const list: UiNode = {
+      className: 'screen.state_picker',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'EditText', text: 'Search', clickable: true, bounds: { x: 0, y: 60, w: 1080, h: 120 }, children: [] }, // top search — skipped (y < 12%)
+        { className: 'TextView', text: 'Cancel', clickable: true, bounds: { x: 900, y: 400, w: 160, h: 80 }, children: [] }, // dismiss — skipped
+        { className: 'TextView', text: 'Alabama', clickable: true, bounds: { x: 0, y: 500, w: 1080, h: 120 }, children: [] },
+        { className: 'TextView', text: 'Alaska', clickable: true, bounds: { x: 0, y: 640, w: 1080, h: 120 }, children: [] },
+      ],
+    };
+    const pick = pickFirstOption(list);
+    expect(pick).toEqual({ x: 540, y: 560 }); // Alabama's center
+  });
+
+  it('opens a dropdown, waits, picks an option, and returns to the form (Country/State picker)', async () => {
+    // A form with one text field and one State dropdown (focusable:false). Tapping
+    // the dropdown opens a list (after a "load"); picking an option sets its value.
+    let mode: 'form' | 'list' = 'form';
+    let stateValue = 'State / Region *';
+    const formTree = (): UiNode => ({
+      className: 'screen.address',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/f', text: 'Full Name *', focusable: true, clickable: true, enabled: true, bounds: { x: 0, y: 200, w: 1080, h: 120 }, children: [] },
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/f', text: 'Zip / Postal Code *', focusable: true, clickable: true, enabled: true, bounds: { x: 0, y: 360, w: 1080, h: 120 }, children: [] },
+        { className: 'android.widget.EditText', resourceId: 'com.x:id/dd', text: stateValue, focusable: false, clickable: true, enabled: true, bounds: { x: 0, y: 520, w: 1080, h: 120 }, children: [] },
+      ],
+    });
+    const listTree = (): UiNode => ({
+      className: 'screen.state_list',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'TextView', text: 'California', clickable: true, bounds: { x: 0, y: 500, w: 1080, h: 120 }, children: [] },
+        { className: 'TextView', text: 'New York', clickable: true, bounds: { x: 0, y: 640, w: 1080, h: 120 }, children: [] },
+      ],
+    });
+    const driver: DeviceDriver = {
+      async launch() {},
+      async uiTree() { return mode === 'form' ? formTree() : listTree(); },
+      async tap(p) {
+        if (mode === 'form' && p.y >= 520 && p.y <= 640) mode = 'list';    // tapped the dropdown
+        else if (mode === 'list') { stateValue = 'California'; mode = 'form'; } // picked an option
+      },
+      async type() {}, async clearText() {}, async pressEnter() {},
+      async isKeyboardShown() { return true; },
+      async dismissKeyboard() {}, async back() {},
+      async swipe() {}, async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return 'com.x/.Address'; },
+      async waitForIdle() {},
+    };
+
+    await explore(driver, { appId: 'com.x', maxActions: 1 });
+    expect(stateValue).toBe('California'); // the dropdown got a real selection
+    expect(mode).toBe('form'); // and we returned to the form
+  });
+
+  it('relaunches (not stop) when trapped on a no-candidate modal — if frontier remains', async () => {
+    // Home has two entries: one opens a dead wheel-picker sheet (no clickable
+    // items, eats back); the other is normal. When the explorer falls into the
+    // dead sheet it must NOT kill the run — there's still untried frontier
+    // (the other button), so it relaunches and keeps going.
+    let launched = 0;
+    let onModal = false;
+    const home: UiNode = {
+      className: 'screen.home',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'android.widget.Button', resourceId: 'com.x:id/open_picker', text: 'Quantity', clickable: true, enabled: true, bounds: { x: 0, y: 200, w: 1080, h: 140 }, children: [] },
+        { className: 'android.widget.Button', resourceId: 'com.x:id/other', text: 'Other', clickable: true, enabled: true, bounds: { x: 0, y: 400, w: 1080, h: 140 }, children: [] },
+      ],
+    };
+    const modal: UiNode = {
+      className: 'screen.qty_picker',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [{ className: 'android.widget.TextView', text: 'Select quantity', bounds: { x: 40, y: 60, w: 400, h: 60 }, children: [] }],
+    };
+    const driver: DeviceDriver = {
+      async launch() { launched += 1; onModal = false; },
+      async uiTree() { return onModal ? modal : home; },
+      async tap(p: Point) { if (!onModal && p.y >= 200 && p.y <= 340) onModal = true; }, // tapped "Quantity"
+      async type() {}, async clearText() {}, async pressEnter() {},
+      async isKeyboardShown() { return false; }, async dismissKeyboard() {},
+      async back() { /* the modal eats back: no state change */ },
+      async swipe() {}, async deepLink() {},
+      async screenshot(p: string) { return p; },
+      async routeHint() { return 'com.x/.Main'; },
+      async waitForIdle() {},
+    };
+
+    const ifg = await explore(driver, { appId: 'com.x', maxActions: 12 });
+    expect(launched).toBeGreaterThanOrEqual(2); // initial launch + ≥1 relaunch-to-escape
+    expect(ifg.nodes.length).toBeGreaterThanOrEqual(2); // saw home + the dead modal, kept going
   });
 
   it('escapes a modal that eats back by tapping its exit button (the leave-dialog trap)', async () => {
@@ -270,7 +435,7 @@ describe('text input handling', () => {
         // "Leave" button is the one at y~670
         if (onDialog && p.y > 600 && p.y < 740) { tappedLeave = true; onDialog = false; }
       },
-      async type() {}, async clearText() {}, async pressEnter() {}, async dismissKeyboard() {},
+      async type() {}, async clearText() {}, async pressEnter() {}, async isKeyboardShown() { return true; }, async dismissKeyboard() {},
       async back() { /* modal swallows back: no state change */ },
       async swipe() {}, async deepLink() {},
       async screenshot(p: string) { return p; },
@@ -320,6 +485,7 @@ describe('text input handling', () => {
         calls.push('enter');
         submitted = true; // search submitted → next screen is results
       },
+      async isKeyboardShown() { return true; },
       async dismissKeyboard() {
         calls.push('dismiss');
       },
@@ -390,6 +556,7 @@ describe('prioritization & revisit suppression', () => {
     async type() {}
     async clearText() {}
     async pressEnter() {}
+    async isKeyboardShown() { return true; }
     async dismissKeyboard() {}
     async deepLink() {}
     async routeHint() { return `com.x/.${this.current}`; }

@@ -18,6 +18,9 @@ export interface FlowNode {
     role?: string;
     visits: number;
     screenshotUrl?: string;
+    phase?: 'pre-main' | 'main';
+    section?: string;
+    hasTabbar?: boolean;
   };
 }
 
@@ -50,6 +53,9 @@ export function ifgToFlow(ifg: PartialIfg): { nodes: FlowNode[]; edges: FlowEdge
         role: n.role,
         visits: n.visits ?? 0,
         screenshotUrl: firstHttpScreenshot(n),
+        phase: n.phase,
+        section: n.section,
+        hasTabbar: n.patterns?.some((p) => p.kind === 'tabbar'),
       },
     };
   });

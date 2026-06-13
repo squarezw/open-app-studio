@@ -4,7 +4,7 @@ import { makeLlmDecider } from '../src/llm-explorer.js';
 import type { Candidate, DecisionContext } from '../src/heuristic-explorer.js';
 
 function candidate(index: number, label: string, score: number, editable = false): Candidate {
-  return { index, label, hint: label.toLowerCase(), editable, score, selector: { text: label }, center: { x: 0, y: index * 100 } };
+  return { index, label, hint: label.toLowerCase(), editable, dropdown: false, yFraction: 0.5, score, selector: { text: label }, center: { x: 0, y: index * 100 } };
 }
 
 function ctx(candidates: Candidate[]): DecisionContext {
@@ -21,20 +21,38 @@ const TWO = [candidate(0, 'Cart', 3), candidate(1, 'Scan', -3)];
 
 describe('makeLlmDecider', () => {
   it('uses the LLM choice when valid', async () => {
-    const decide = makeLlmDecider(llmReturning({ action: 'tap', index: 1, reason: 'curious' }));
+    const decide = makeLlmDecider(llmReturning({ action: 'tap', index: 1, reason: 'curious' }), { economical: false });
     expect(await decide(ctx(TWO))).toEqual({ act: 'tap', index: 1, reason: 'curious' });
   });
 
   it('maps back, stop, and type (with value)', async () => {
-    expect(await makeLlmDecider(llmReturning({ action: 'back', reason: 'dead end' }))(ctx(TWO))).toEqual({ act: 'back', reason: 'dead end' });
-    expect(await makeLlmDecider(llmReturning({ action: 'stop' }))(ctx(TWO))).toMatchObject({ act: 'stop' });
+    const opt = { economical: false } as const;
+    expect(await makeLlmDecider(llmReturning({ action: 'back', reason: 'dead end' }), opt)(ctx(TWO))).toEqual({ act: 'back', reason: 'dead end' });
+    expect(await makeLlmDecider(llmReturning({ action: 'stop' }), opt)(ctx(TWO))).toMatchObject({ act: 'stop' });
     const field = [candidate(0, 'Search', 3, true), candidate(1, 'Cart', 3)];
-    expect(await makeLlmDecider(llmReturning({ action: 'type', index: 0, value: 'omega 3' }))(ctx(field))).toEqual({
+    expect(await makeLlmDecider(llmReturning({ action: 'type', index: 0, value: 'omega 3' }), opt)(ctx(field))).toEqual({
       act: 'type',
       index: 0,
       value: 'omega 3',
       reason: undefined,
     });
+  });
+
+  it('economical mode: takes a clear heuristic winner WITHOUT calling the LLM', async () => {
+    const llm = llmReturning({ action: 'tap', index: 1 });
+    const spy = vi.spyOn(llm, 'chatJson');
+    const decide = makeLlmDecider(llm); // economical defaults on
+    // Cart(3) vs Scan(-3): margin 6 ≥ 2 → clear winner, no deliberation
+    expect(await decide(ctx(TWO))).toEqual({ act: 'tap', index: 0 });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('economical mode: consults the LLM when candidates are close', async () => {
+    const llm = llmReturning({ action: 'tap', index: 1, reason: 'tie-break' });
+    const spy = vi.spyOn(llm, 'chatJson');
+    const close = [candidate(0, 'A', 3), candidate(1, 'B', 3)]; // tie → ambiguous
+    expect(await makeLlmDecider(llm)(ctx(close))).toEqual({ act: 'tap', index: 1, reason: 'tie-break' });
+    expect(spy).toHaveBeenCalledOnce();
   });
 
   it('skips the LLM (no call) when ≤1 candidate and falls back to heuristic', async () => {
@@ -46,14 +64,14 @@ describe('makeLlmDecider', () => {
   });
 
   it('falls back to heuristic on an out-of-range index', async () => {
-    const decide = makeLlmDecider(llmReturning({ action: 'tap', index: 99 }));
+    const decide = makeLlmDecider(llmReturning({ action: 'tap', index: 99 }), { economical: false });
     // heuristic picks the highest score → Cart (index 0)
     expect(await decide(ctx(TWO))).toEqual({ act: 'tap', index: 0 });
   });
 
   it('falls back to heuristic on LLM/transport error', async () => {
     const failing = new LlmClient({ apiKey: 'k', fetchImpl: (async () => new Response('nope', { status: 500 })) as typeof fetch });
-    const decide = makeLlmDecider(failing);
+    const decide = makeLlmDecider(failing, { economical: false });
     expect(await decide(ctx(TWO))).toEqual({ act: 'tap', index: 0 });
   });
 

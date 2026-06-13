@@ -54,3 +54,40 @@ export function deriveFlows(ifg: InteractionFlowGraph): Flow[] {
   }
   return flows;
 }
+
+/**
+ * Derives a flow for every DFS dead-end: a node with no forward (non-back)
+ * transitions out is a leaf, and its launch→leaf path is one complete route
+ * through the app. Deduped by edge sequence; shorter paths that are a strict
+ * prefix of a longer leaf path are dropped (the longer one subsumes them).
+ */
+export function deriveLeafFlows(ifg: InteractionFlowGraph): Flow[] {
+  const launchId = ifg.nodes[0]?.id;
+  const hasForward = new Set(ifg.edges.filter((e) => e.action.kind !== 'back').map((e) => e.from));
+  const leaves = ifg.nodes.filter((n) => n.id !== launchId && !hasForward.has(n.id));
+
+  const paths = leaves
+    .map((leaf) => ({ leaf, edges: pathTo(ifg, leaf.id) }))
+    .filter((p): p is { leaf: (typeof leaves)[number]; edges: NonNullable<ReturnType<typeof pathTo>> } =>
+      Boolean(p.edges && p.edges.length > 0),
+    )
+    .map((p) => ({ ...p, ids: p.edges.map((e) => e.id) }))
+    .sort((a, b) => b.ids.length - a.ids.length); // longest first
+
+  const flows: Flow[] = [];
+  const kept: string[][] = [];
+  for (const p of paths) {
+    const joined = p.ids.join(',');
+    // skip if this path is a prefix of an already-kept (longer) path
+    if (kept.some((k) => k.join(',').startsWith(joined))) continue;
+    kept.push(p.ids);
+    flows.push({
+      id: `leaf_${p.leaf.id}`,
+      name: `Path to ${p.leaf.title ?? p.leaf.id}`,
+      description: `Full route to a dead-end (${p.ids.length} step${p.ids.length > 1 ? 's' : ''})`,
+      edgeIds: p.ids,
+      coverage: 'observed',
+    });
+  }
+  return flows;
+}

@@ -8,6 +8,8 @@ import { createApp } from './server.js';
 const port = Number(process.env.PORT ?? 4400);
 const runsDir = resolve(process.env.OAS_RUNS_DIR ?? 'runs');
 const manager = new RunManager(runsDir);
+const reloaded = manager.loadFromDisk();
+if (reloaded > 0) console.log(`Reloaded ${reloaded} past run(s) from ${runsDir}`);
 const app = createApp(manager, { runsDir });
 
 const server = serve({ fetch: app.fetch, port }, (info) => {

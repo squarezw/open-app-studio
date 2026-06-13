@@ -22,6 +22,7 @@ export interface UiNode {
   clickable?: boolean;
   scrollable?: boolean;
   enabled?: boolean;
+  focusable?: boolean;
   children: UiNode[];
 }
 
@@ -108,12 +109,23 @@ export interface Evidence {
   capturedAt?: string;
 }
 
+/**
+ * Where a screen sits relative to the app's tabbed main UI:
+ *   'pre-main' — splash / ad / login / onboarding seen before the tab bar
+ *   'main'     — a tabbed screen, or anything reached from one
+ * Absent on apps with no tab bar (those are free-explored, no phase concept).
+ */
+export type ScreenPhase = 'pre-main' | 'main';
+
 export interface ScreenNode {
   id: string;
   fingerprint: string;
   routeHint?: string;
   role?: ScreenRole;
   title?: string;
+  /** Bottom-tab section this screen belongs to (the tab label), when known. */
+  section?: string;
+  phase?: ScreenPhase;
   patterns?: ComponentPattern[];
   evidence?: Evidence[];
   visits?: number;

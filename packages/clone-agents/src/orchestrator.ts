@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { DeviceDriver } from '@oas/device-bridge';
 import type { GraphEvent, InteractionFlowGraph, Platform } from '@oas/flow-graph';
-import { annotate, deriveFlows } from './annotator.js';
+import { annotate, deriveFlows, deriveLeafFlows } from './annotator.js';
 import { explore, type Decider } from './heuristic-explorer.js';
 
 /**
@@ -80,7 +80,15 @@ export class Orchestrator extends EventEmitter {
 
       if (this.opts.storeUrl) ifg.meta.storeUrl = this.opts.storeUrl;
       annotate(ifg);
-      ifg.flows = [...(ifg.flows ?? []), ...deriveFlows(ifg)];
+      // Role-based flows + every DFS dead-end path, deduped by edge sequence.
+      const combined = [...(ifg.flows ?? []), ...deriveFlows(ifg), ...deriveLeafFlows(ifg)];
+      const seen = new Set<string>();
+      ifg.flows = combined.filter((f) => {
+        const key = f.edgeIds.join(',');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       this.emit('log', `done: ${ifg.nodes.length} screens, ${ifg.edges.length} transitions, ${ifg.flows.length} flows`);
       this.emit('done', ifg);
       return ifg;

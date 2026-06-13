@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -10,14 +10,20 @@ import {
   provisionalIfgFromMetadata,
   type Decider,
 } from '@oas/clone-agents';
-import { AdbDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
+import {
+  AdbDriver,
+  AppiumDriver,
+  DEMO_TABBED_APP,
+  FakeDriver,
+  type DeviceDriver,
+} from '@oas/device-bridge';
 import { replayScript } from '@oas/flow-graph';
 import type { AppSpec } from '@oas/app-spec';
 import { generateComponent, type GenerateResult } from '@oas/component-gen';
 import { LlmClient } from '@oas/llm';
 import { BlueprintManager } from './blueprint-manager.js';
 import { CustomComponentStore } from './custom-components.js';
-import type { RunManager } from './run-manager.js';
+import type { RunManager, RunSpec } from './run-manager.js';
 import { VIEWER_HTML } from './viewer.js';
 
 interface CreateRunBody {
@@ -64,6 +70,29 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       const goal = `Map the interaction flows of the app${appName ? ` "${appName}"` : ''}. Prioritise core user journeys: browse/search → product detail → add to cart → cart → checkout (stop before paying), and account sign-up / log-in. Avoid dwelling in utility areas (barcode scanner, share, settings, notifications).`;
       return { brain: 'llm' as const, goal, decide: makeLlmDecider(llm) };
     });
+
+  /** Build the driver + brain from a (re-runnable) spec and start the run. */
+  function beginRun(spec: RunSpec): { runId: string; brain: 'llm' | 'heuristic' } {
+    const driver: DeviceDriver =
+      spec.driver === 'fake'
+        ? new FakeDriver(spec.appId === 'com.tabbed' ? DEMO_TABBED_APP : undefined)
+        : spec.driver === 'appium'
+          ? new AppiumDriver({ serial: spec.serial, log: (m) => console.log(`[appium] ${m}`) })
+          : new AdbDriver({ serial: spec.serial, log: (m) => console.log(`[adb] ${m}`) });
+    const brainSetup = spec.brain === 'heuristic' ? { brain: 'heuristic' as const } : makeDecider(spec.appName);
+    const finalSpec: RunSpec = { ...spec, brain: brainSetup.brain };
+    const record = manager.start(finalSpec, driver, {
+      appId: spec.appId,
+      appName: spec.appName,
+      storeUrl: spec.storeUrl,
+      maxActions: spec.maxActions,
+      stallThreshold: spec.stallThreshold,
+      decide: brainSetup.decide,
+      goal: brainSetup.goal,
+    });
+    return { runId: record.id, brain: brainSetup.brain };
+  }
+
   const app = new Hono();
 
   // Studio talks to the gateway cross-origin during development. The gateway
@@ -115,24 +144,28 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
 
     if (!appId) return c.json({ error: 'provide `url` or `appId`' }, 400);
 
-    const driver: DeviceDriver =
-      body.driver === 'fake'
-        ? new FakeDriver()
-        : new AdbDriver({ serial: body.serial, log: (m) => console.log(`[adb] ${m}`) });
-
-    const wantHeuristic = body.brain === 'heuristic';
-    const brainSetup = wantHeuristic ? { brain: 'heuristic' as const } : makeDecider(appName);
-
-    const record = manager.start(driver, {
+    const record = beginRun({
       appId,
       appName,
+      url: body.url,
       storeUrl,
+      driver: body.driver ?? 'adb',
+      brain: body.brain === 'heuristic' ? 'heuristic' : 'llm',
+      serial: body.serial,
       maxActions: body.maxActions,
       stallThreshold: body.stallThreshold,
-      decide: brainSetup.decide,
-      goal: brainSetup.goal,
     });
-    return c.json({ runId: record.id, mode: 'explore', brain: brainSetup.brain }, 201);
+    return c.json({ runId: record.runId, mode: 'explore', brain: record.brain }, 201);
+  });
+
+  // Re-run a previous run with the same parameters (works across restarts —
+  // the spec is reloaded from disk).
+  app.post('/api/runs/:id/rerun', (c) => {
+    const prev = manager.get(c.req.param('id'));
+    if (!prev) return c.json({ error: 'run not found' }, 404);
+    if (!prev.spec) return c.json({ error: 'this run has no saved spec to re-run' }, 409);
+    const record = beginRun(prev.spec);
+    return c.json({ runId: record.runId, mode: 'explore', brain: record.brain, rerunOf: prev.id }, 201);
   });
 
   app.get('/api/runs', (c) =>
@@ -143,6 +176,7 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
         status: r.status,
         createdAt: r.createdAt,
         coverage: r.ifg?.meta.coverage,
+        rerunnable: Boolean(r.spec),
       })),
     ),
   );
@@ -158,6 +192,7 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       eventCount: record.events.length,
       error: record.error,
       coverage: record.ifg?.meta.coverage,
+      rerunnable: Boolean(record.spec),
     });
   });
 
@@ -180,6 +215,40 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       })),
     };
     return c.json(ifg);
+  });
+
+  // Persisted canvas layout (user-arranged node positions) for a run. Survives
+  // gateway restarts and follows the run across browsers, like its other artifacts.
+  app.get('/api/runs/:id/layout', async (c) => {
+    const id = c.req.param('id');
+    if (!deps.runsDir || !/^[\w-]+$/.test(id)) return c.json({ positions: {} });
+    try {
+      const raw = await readFile(join(deps.runsDir, id, 'layout.json'), 'utf8');
+      return c.json(JSON.parse(raw) as unknown);
+    } catch {
+      return c.json({ positions: {} }); // no saved layout yet
+    }
+  });
+
+  app.put('/api/runs/:id/layout', async (c) => {
+    const id = c.req.param('id');
+    if (!deps.runsDir || !/^[\w-]+$/.test(id)) return c.json({ error: 'persistence disabled' }, 400);
+    if (!manager.get(id)) return c.json({ error: 'run not found' }, 404);
+    let body: { positions?: Record<string, { x: number; y: number }> };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'invalid json' }, 400);
+    }
+    const positions = body?.positions ?? {};
+    try {
+      const dir = join(deps.runsDir, id);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'layout.json'), JSON.stringify({ positions }, null, 2));
+      return c.json({ ok: true, count: Object.keys(positions).length });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
   });
 
   // Serve a captured screenshot (only filenames we generate: step_<n>.png).

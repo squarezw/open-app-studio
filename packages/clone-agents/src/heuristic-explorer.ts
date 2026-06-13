@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { DeviceDriver } from '@oas/device-bridge';
 import {
+  fingerprint,
   GraphBuilder,
   selectorKey,
   type Action,
@@ -11,6 +12,18 @@ import {
   type UiNode,
 } from '@oas/flow-graph';
 import { scoreCandidate, signatureOf } from './policy.js';
+import { detectTabBar, tabKey, type TabItem } from './tabbar.js';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Cap vertical scrolling per screen so infinite feeds can't run forever. */
+const MAX_SCROLLS_PER_SCREEN = 4;
+
+/** Does the screen contain a scrollable container? */
+function hasScrollable(node: UiNode): boolean {
+  if (node.scrollable) return true;
+  return node.children.some(hasScrollable);
+}
 
 /**
  * M0 spike: a deterministic, LLM-free Explorer. It walks the app breadth-first
@@ -45,8 +58,12 @@ interface Interactable {
   center: { x: number; y: number };
   /** A text field we should type into rather than just tap. */
   editable: boolean;
-  /** Hint for input synthesis (resource id + content-desc + class, lowercased). */
+  /** A select/dropdown that opens a picker on tap (non-focusable EditText / Spinner). */
+  dropdown: boolean;
+  /** Hint for input synthesis (resource id + content-desc + text + class, lowercased). */
   hint: string;
+  /** Current visible text/value of the element (the label when empty). */
+  text?: string;
 }
 
 /** A scored, pickable element on the current screen (passed to a Decider). */
@@ -55,6 +72,12 @@ export interface Candidate {
   label: string;
   hint: string;
   editable: boolean;
+  /** Opens a picker on tap (dropdown), vs a plain tap. */
+  dropdown: boolean;
+  /** Current visible text/value — distinguishes fields that share one resourceId. */
+  text?: string;
+  /** Vertical position 0=top..1=bottom — spatial disambiguation for the LLM. */
+  yFraction: number;
   score: number;
   selector: Selector;
   center: { x: number; y: number };
@@ -111,11 +134,22 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   let consecutiveRelaunches = 0;
   let lastObservedNodeId: string | undefined;
   let sameNodeStreak = 0;
+  const scrollsByNode = new Map<string, number>();
+  const scrollExhausted = new Set<string>();
   const history: string[] = [];
   // Cross-screen learning: which node a recurring button leads to, and how
   // often we've landed on each node — so we stop re-opening known dead-ends.
   const destinationOf = new Map<string, string>();
   const visitCount = new Map<string, number>();
+
+  // Tabbar awareness. The first screen carrying a bottom tab bar is the tabbed
+  // "main" UI; screens before it (splash/ad/login/onboarding) are pre-main.
+  // Each tab is a top-level entry explored as its own DFS section root.
+  let tabBar: TabItem[] | undefined;
+  let mainReached = false;
+  let currentSection: string | undefined;
+  const tabsVisited = new Set<string>();
+  const preMainNodes: string[] = [];
 
   for (let step = 0; step < maxActions; step++) {
     const tree = await driver.uiTree();
@@ -154,9 +188,33 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     appPackage ??= pkg; // first in-app screen defines the target package
     visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
 
+    // Detect the bottom tab bar. The first screen that has one is the tabbed
+    // main UI; from there each tab is a top-level section root (handled below).
+    const tabsHere = detectTabBar(tree);
+    if (tabsHere) {
+      tabBar = tabsHere;
+      if (!mainReached) {
+        mainReached = true;
+        log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
+      }
+      graph.notePattern(nodeId, { kind: 'tabbar' });
+    }
+    if (mainReached) {
+      graph.markPhase(nodeId, 'main');
+      if (currentSection) graph.markSection(nodeId, currentSection);
+    } else {
+      // Provisional: only committed as pre-main if a tab bar is ever reached.
+      // Apps with no tab bar are free-explored and carry no phase at all.
+      preMainNodes.push(nodeId);
+    }
+
     // A `back` that left us on the same screen is a modal eating the gesture
     // (e.g. a "discard changes?" dialog). Don't keep backing into it.
     const backWasNoOp = pending?.action.kind === 'back' && pending.fromId === nodeId;
+    // A scroll that left us on the SAME node = nothing new scrolled into view:
+    // we're at the bottom, or it's an infinite feed whose structure repeats
+    // (content-invariant fingerprint). Either way, stop scrolling this screen.
+    if (pending?.action.kind === 'scroll' && pending.fromId === nodeId) scrollExhausted.add(nodeId);
     sameNodeStreak = nodeId === lastObservedNodeId ? sameNodeStreak + 1 : 0;
     lastObservedNodeId = nodeId;
 
@@ -189,57 +247,90 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const untriedKeys = new Set(graph.untried(nodeId).map((s) => selectorKey(s)));
     const title = guessTitle(tree);
 
-    // Forms first (deterministic, ahead of the decider): a screen with a
-    // multi-field form and unfilled fields gets every field filled by its own
-    // hint before anything taps a submit button — otherwise validation fails
-    // on empties and backing out pops a "discard changes?" dialog (the trap the
-    // explorer got stuck in on iHerb's address form). One keyboard-dismiss back
-    // at the end (the IME is open after the last type, so it closes the
-    // keyboard rather than navigating away).
+    // Forms first (deterministic, ahead of the decider): a multi-field form
+    // gets every text field filled before anything taps submit — otherwise
+    // validation fails on empties and backing out pops a "discard changes?"
+    // dialog (the iHerb address-form trap).
+    //
+    // Real-world quirks handled (learned from iHerb): dropdowns render as
+    // non-focusable EditText → excluded by isEditable; every field can share
+    // one resourceId → dedup by the field's CURRENT TEXT (a filled field shows
+    // our typed value), not by selector; fields below the fold are reached by
+    // scrolling. We NEVER press a bare back() here — only dismissKeyboard
+    // (safe), so the form is never accidentally navigated away.
     const untriedEditable = editableFields.filter((f) => untriedKeys.has(selectorKey(f.selector)));
     if (editableFields.length >= 2 && untriedEditable.length > 0) {
       const first = editableFields[0]!;
-      // Long forms have fields below the fold (e.g. the phone number at the
-      // bottom). Fill every visible field, scroll down, fill newly-revealed
-      // ones, repeat — then dismiss the keyboard SAFELY (only if shown, so it
-      // never navigates and pops a "discard changes?" dialog).
-      const filledSigs = new Set<string>();
+      const typedValues = new Set<string>();
       let totalFilled = 0;
       for (let pass = 0; pass < 5; pass++) {
-        const passTree = pass === 0 ? tree : await driver.uiTree();
-        const fields = collectInteractables(passTree).filter((i) => i.editable);
-        const fresh = fields.filter((f) => !filledSigs.has(signatureOf(f.selector)));
+        const fields = (pass === 0 ? interactables : collectInteractables(await driver.uiTree())).filter(
+          (i) => i.editable,
+        );
+        // Unfilled = current text isn't a value we've already typed.
+        const fresh = fields.filter((f) => !(f.text && typedValues.has(f.text)));
+        if (fresh.length === 0) break;
         for (const f of fresh) {
+          graph.markTried(nodeId, f.selector);
+          const value = synthesizeInput(f.hint);
+          await driver.dismissKeyboard(); // clean layout before tapping next field (safe)
           await driver.tap(f.center);
           await driver.waitForIdle();
-          await driver.clearText(); // avoid "testtest" if a field is re-typed
-          await driver.type(synthesizeInput(f.hint));
-          await driver.dismissKeyboard();
-          filledSigs.add(signatureOf(f.selector));
-          graph.markTried(nodeId, f.selector);
+          await driver.clearText();
+          await driver.type(value);
+          typedValues.add(value);
           totalFilled += 1;
         }
-        if (fresh.length === 0) break;
-        const h = passTree.bounds?.h ?? 2400;
-        const w = passTree.bounds?.w ?? 1080;
+        await driver.dismissKeyboard();
+        const h = tree.bounds?.h ?? 2400;
+        const w = tree.bounds?.w ?? 1080;
         await driver.swipe({ x: w / 2, y: h * 0.72 }, { x: w / 2, y: h * 0.3 }, 400);
         await driver.waitForIdle();
       }
-      log(`[${step}] ${nodeId} filled ${totalFilled} form fields (scroll-fill)`);
+      log(`[${step}] ${nodeId} filled ${totalFilled} text field(s)`);
+
+      // Dropdowns (Country / State): tap to open the picker, wait for it to
+      // load (often a network request), pick the first real option, return.
+      const dropdowns = collectInteractables(await driver.uiTree()).filter((i) => i.dropdown);
+      let pickedCount = 0;
+      for (const dd of dropdowns) {
+        await driver.dismissKeyboard();
+        await driver.tap(dd.center);
+        await waitForStableTree(() => driver.uiTree(), { maxMs: 6000 });
+        const option = pickFirstOption(await driver.uiTree());
+        if (option) {
+          await driver.tap(option);
+          await waitForStableTree(() => driver.uiTree(), { maxMs: 4000 });
+          pickedCount += 1;
+        } else {
+          await driver.dismissKeyboard(); // nothing pickable; leave the picker
+        }
+      }
+      if (pickedCount > 0) log(`[${step}] ${nodeId} selected ${pickedCount} dropdown(s)`);
+
       pending = {
         fromId: nodeId,
         action: { kind: 'type', selector: first.selector, point: first.center, inputValue: '(form)' },
         signature: signatureOf(first.selector),
       };
-      history.push(`${title ?? nodeId} → fill form (${totalFilled} fields)`);
+      history.push(`${title ?? nodeId} → fill form (${totalFilled} fields, ${pickedCount} dropdowns)`);
       consecutiveBacks = 0;
       await driver.waitForIdle();
       continue;
     }
 
+    // Tab bars are driven explicitly (one section at a time), not as ordinary
+    // candidates — keep them out of in-section exploration so a section is
+    // exhausted before we switch tabs.
+    const tabSelKeys = new Set((tabBar ?? []).map((t) => selectorKey(t.selector)));
+
     const candidates: Candidate[] = [];
     for (const cand of interactables) {
       if (!untriedKeys.has(selectorKey(cand.selector))) continue;
+      if (tabSelKeys.has(selectorKey(cand.selector))) {
+        graph.markTried(nodeId, cand.selector);
+        continue;
+      }
       const signature = signatureOf(cand.selector);
       const dest = destinationOf.get(signature);
       if (dest && dest !== nodeId && !graph.hasUntried(dest)) {
@@ -251,6 +342,9 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         label: labelOf(cand.selector),
         hint: cand.hint,
         editable: cand.editable,
+        dropdown: cand.dropdown,
+        text: cand.text,
+        yFraction: Math.round((cand.center.y / screenHeight) * 100) / 100,
         score: scoreCandidate({
           hint: cand.hint,
           signature,
@@ -276,15 +370,74 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     }
 
     // back is being eaten by a modal — stop backing, tap a candidate to escape
-    // (e.g. "Leave" on a discard dialog). If there's nothing to tap, stop.
+    // (e.g. "Leave" on a discard dialog).
     if (decision.act === 'back' && backWasNoOp) {
       if (candidates.length > 0) {
         const best = candidates.reduce((a, b) => (b.score > a.score ? b : a));
         decision = best.editable
           ? { act: 'type', index: best.index, reason: 'back trapped by a modal; interacting to escape' }
           : { act: 'tap', index: best.index, reason: 'back trapped by a modal; tapping to escape' };
+      } else if (graph.hasAnyUntried() && consecutiveRelaunches < 3) {
+        // Trapped on a modal with nothing to tap (e.g. a wheel-picker sheet that
+        // exposes no clickable items and eats back), but there's still untried
+        // frontier elsewhere. Don't kill the run — relaunch to a known state and
+        // keep exploring (tried-state persists, so we won't redo this path).
+        consecutiveRelaunches += 1;
+        log(`[${step}] ${nodeId} trapped modal w/ no candidates — relaunching ${opts.appId} to continue`);
+        await driver.launch(opts.appId);
+        pending = undefined;
+        await driver.waitForIdle();
+        continue;
       } else {
-        decision = { act: 'stop', reason: 'back trapped and nothing to tap' };
+        decision = { act: 'stop', reason: graph.hasAnyUntried() ? 'trapped; relaunch budget exhausted' : 'trapped; nothing left to explore' };
+      }
+    }
+
+    // Before leaving an exhausted-but-scrollable screen, scroll down to reveal
+    // below-the-fold content. Bounded: at most MAX_SCROLLS_PER_SCREEN per
+    // screen, and we stop the moment a scroll changes nothing (bottom reached,
+    // or an infinite feed whose structure repeats → same fingerprint → marked
+    // scrollExhausted on the next observe).
+    const scrolls = scrollsByNode.get(nodeId) ?? 0;
+    if (
+      decision.act === 'back' &&
+      candidates.length === 0 &&
+      hasScrollable(tree) &&
+      !scrollExhausted.has(nodeId) &&
+      scrolls < MAX_SCROLLS_PER_SCREEN
+    ) {
+      scrollsByNode.set(nodeId, scrolls + 1);
+      const h = tree.bounds?.h ?? 2400;
+      const w = tree.bounds?.w ?? 1080;
+      log(`[${step}] ${nodeId} exhausted — scroll down (${scrolls + 1}/${MAX_SCROLLS_PER_SCREEN})`);
+      await driver.swipe({ x: w / 2, y: h * 0.75 }, { x: w / 2, y: h * 0.3 }, 400);
+      pending = { fromId: nodeId, action: { kind: 'scroll', direction: 'down' } };
+      consecutiveBacks = 0;
+      await driver.waitForIdle();
+      continue;
+    }
+
+    // Tabbar-aware: once the tabbed main UI is reached, every bar is a top-level
+    // entry. When the decider would back out of (or stop on) an exhausted
+    // section, jump to the next unvisited tab instead — so each section is
+    // explored as its own DFS root before the run ends.
+    if (mainReached && tabsHere && (decision.act === 'back' || decision.act === 'stop')) {
+      const nextTab = tabsHere.find((t) => !tabsVisited.has(tabKey(t)));
+      if (nextTab) {
+        tabsVisited.add(tabKey(nextTab));
+        currentSection = nextTab.label;
+        graph.markTried(nodeId, nextTab.selector);
+        log(`[${step}] ${nodeId} section done — switch to tab "${nextTab.label}"`);
+        await driver.tap(nextTab.center);
+        pending = {
+          fromId: nodeId,
+          action: { kind: 'tap', selector: nextTab.selector, point: nextTab.center },
+          signature: signatureOf(nextTab.selector),
+        };
+        history.push(`${title ?? nodeId} → tab ${nextTab.label}`);
+        consecutiveBacks = 0;
+        await driver.waitForIdle();
+        continue;
       }
     }
 
@@ -339,6 +492,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     await driver.waitForIdle();
   }
 
+  // Only commit pre-main tags if a tabbed main UI was actually found. Apps with
+  // no tab bar are free-explored and carry no phase concept.
+  if (mainReached) for (const id of preMainNodes) graph.markPhase(id, 'pre-main');
+
   return graph.toIFG();
 }
 
@@ -352,12 +509,18 @@ export function collectInteractables(root: UiNode): Interactable[] {
   function walk(node: UiNode, path: number[]): void {
     const b = node.bounds;
     const editable = isEditable(node);
+    const dropdown = isDropdown(node);
     if ((node.clickable || editable) && node.enabled !== false && b && b.w > 0 && b.h > 0) {
       out.push({
         selector: toSelector(node, path),
         center: { x: b.x + b.w / 2, y: b.y + b.h / 2 },
         editable,
-        hint: `${node.resourceId ?? ''} ${node.contentDesc ?? ''} ${node.className}`.toLowerCase(),
+        dropdown,
+        // Include the visible text/label: many apps reuse one resourceId for
+        // every field, so the label is the only thing that tells them apart
+        // (and lets synthesizeInput match "Full Name" → a name).
+        hint: `${node.resourceId ?? ''} ${node.contentDesc ?? ''} ${node.text ?? ''} ${node.className}`.toLowerCase(),
+        text: node.text,
       });
     }
     node.children.forEach((c, i) => walk(c, [...path, i]));
@@ -372,14 +535,70 @@ export function collectInteractables(root: UiNode): Interactable[] {
 }
 
 /**
- * True text-entry widgets only — EditText / SearchView / AutoComplete. A
- * clickable View that merely *opens* a search screen is left as a normal tap
- * (it navigates forward); the real input box on the next screen is what we type
- * into.
+ * True text-entry widgets only — EditText / SearchView / AutoComplete that are
+ * `focusable`. Apps often render dropdowns (Country/State) as a non-focusable
+ * EditText that opens a picker on tap; those are NOT typeable, so they're left
+ * as normal tap candidates (`focusable=false` → excluded here).
  */
 function isEditable(node: UiNode): boolean {
+  if (node.focusable === false) return false;
   const cls = node.className.toLowerCase();
   return cls.includes('edittext') || cls.includes('searchview') || cls.includes('autocomplete');
+}
+
+/**
+ * A select/dropdown: a Spinner, or a field-like widget that opens a picker on
+ * tap rather than accepting text (iHerb renders Country/State as a
+ * non-focusable EditText). Tapping it should pick an option, not type.
+ */
+function isDropdown(node: UiNode): boolean {
+  const cls = node.className.toLowerCase();
+  if (cls.includes('spinner')) return true;
+  return node.focusable === false && (cls.includes('edittext') || cls.includes('autocomplete'));
+}
+
+/**
+ * Pick the best option on an open picker/list: a clickable leaf with real text,
+ * skipping search boxes, headers and dismiss controls. Returns its tap point.
+ */
+export function pickFirstOption(root: UiNode): { x: number; y: number } | undefined {
+  const screenH = root.bounds?.h ?? 2400;
+  const opts: Array<{ x: number; y: number; text: string }> = [];
+  const walk = (n: UiNode): void => {
+    const b = n.bounds;
+    const text = (n.text ?? n.contentDesc ?? '').trim();
+    const isLeaf = n.children.length === 0;
+    if (n.clickable && isLeaf && b && b.w > 0 && b.h > 0 && text.length >= 2 && text.length <= 40) {
+      if (!/\b(cancel|close|done|back|search|select|clear|ok)\b|^[x✕✖]$/i.test(text)) {
+        opts.push({ x: b.x + b.w / 2, y: b.y + b.h / 2, text });
+      }
+    }
+    n.children.forEach(walk);
+  };
+  walk(root);
+  // Skip the very top (likely a title/search bar); take the first real option.
+  const pick = opts.find((o) => o.y > screenH * 0.12) ?? opts[0];
+  return pick ? { x: pick.x, y: pick.y } : undefined;
+}
+
+/** Poll the UI tree until its structure stops changing (or timeout) — for network-loaded pickers. */
+async function waitForStableTree(
+  getTree: () => Promise<UiNode>,
+  opts: { settleMs?: number; maxMs?: number } = {},
+): Promise<UiNode> {
+  const settleMs = opts.settleMs ?? 500;
+  const maxMs = opts.maxMs ?? 5000;
+  const start = Date.now();
+  let prev = '';
+  let tree = await getTree();
+  while (Date.now() - start < maxMs) {
+    const fp = fingerprint(tree);
+    if (fp === prev) return tree;
+    prev = fp;
+    await sleep(settleMs);
+    tree = await getTree();
+  }
+  return tree;
 }
 
 /** Synthesize a plausible value for a field from its hint (design: realistic inputs, never real creds). */

@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ActionEdge, Flow, ScreenNode } from '@oas/flow-graph';
-import { GATEWAY_URL, gatewayWsUrl, type RunSummary } from '../lib/gateway';
+import {
+  fetchLayout,
+  GATEWAY_URL,
+  gatewayWsUrl,
+  saveLayout,
+  type NodePositions,
+  type RunSummary,
+} from '../lib/gateway';
 import type { PartialIfg } from '../lib/ifg-to-flow';
 import FlowCanvas from './FlowCanvas';
 
@@ -20,6 +27,7 @@ export default function RunView({ id }: { id: string }) {
   const [promoting, setPromoting] = useState(false);
   const [graph, setGraph] = useState<PartialIfg>({ nodes: [], edges: [] });
   const [selectedFlow, setSelectedFlow] = useState<string>();
+  const [savedPositions, setSavedPositions] = useState<NodePositions>();
   const [error, setError] = useState<string>();
   const nodesRef = useRef(new Map<string, ScreenNode>());
   const edgesRef = useRef(new Map<string, ActionEdge>());
@@ -47,6 +55,9 @@ export default function RunView({ id }: { id: string }) {
       }
       if (cancelled) return;
       setRun(info);
+      void fetchLayout(id).then((p) => {
+        if (!cancelled) setSavedPositions(p);
+      });
 
       if (info.status !== 'running') {
         await fetchFullIfg();
@@ -81,6 +92,17 @@ export default function RunView({ id }: { id: string }) {
     const flow = graph.flows?.find((f: Flow) => f.id === selectedFlow);
     return flow ? new Set(flow.edgeIds) : undefined;
   }, [graph.flows, selectedFlow]);
+
+  async function rerun() {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/rerun`, { method: 'POST' });
+      const data = (await res.json()) as { runId?: string; error?: string };
+      if (!res.ok || !data.runId) throw new Error(data.error ?? `HTTP ${res.status}`);
+      router.push(`/runs/${data.runId}`);
+    } catch (err) {
+      setError(`re-run failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   async function promote() {
     setPromoting(true);
@@ -143,6 +165,9 @@ export default function RunView({ id }: { id: string }) {
             </button>
           </>
         )}
+        {run && run.status !== 'running' && run.rerunnable && (
+          <button className="promote" onClick={rerun}>↻ Re-run</button>
+        )}
         {run?.status === 'running' && (
           <p className="run-hint">Exploring live — watch the emulator. The graph grows as screens are found.</p>
         )}
@@ -176,7 +201,12 @@ export default function RunView({ id }: { id: string }) {
         )}
       </aside>
       <div className="canvas-wrap">
-        <FlowCanvas graph={graph} highlight={highlight} />
+        <FlowCanvas
+          graph={graph}
+          highlight={highlight}
+          savedPositions={savedPositions}
+          onSaveLayout={(positions) => saveLayout(id, positions)}
+        />
       </div>
     </div>
   );

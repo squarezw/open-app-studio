@@ -33,15 +33,38 @@ Choose the single best next action.`;
 export interface LlmDeciderOptions {
   /** Fallback when the LLM is unavailable or errors. Defaults to the heuristic policy. */
   fallback?: Decider;
+  /**
+   * Economical mode (default true): when the heuristic policy has a clear
+   * winner (top score beats the runner-up by `margin`), take it WITHOUT calling
+   * the LLM — only deliberate with the model when the choice is genuinely
+   * ambiguous. This is the LLM-Explorer cost model (LLM-less action selection
+   * for the easy majority; the LLM for the hard cases) — far cheaper than
+   * calling the model every step. Set false to always ask the LLM.
+   */
+  economical?: boolean;
+  /** Score margin that counts as a "clear winner" in economical mode. */
+  margin?: number;
   log?: (message: string) => void;
 }
 
 export function makeLlmDecider(llm: LlmClient, opts: LlmDeciderOptions = {}): Decider {
   const fallback = opts.fallback ?? heuristicDecide;
+  const economical = opts.economical ?? true;
+  const margin = opts.margin ?? 2;
   const log = opts.log ?? (() => {});
 
   return async (ctx: DecisionContext): Promise<Decision> => {
     if (!llm.configured || ctx.candidates.length <= 1) return fallback(ctx);
+
+    // Cost control: skip the LLM when the policy is confident (one candidate
+    // clearly outscores the rest). Most screens have an obvious next action.
+    if (economical) {
+      const sorted = [...ctx.candidates].sort((a, b) => b.score - a.score);
+      if (sorted[0]!.score - sorted[1]!.score >= margin) {
+        const best = sorted[0]!;
+        return best.editable ? { act: 'type', index: best.index } : { act: 'tap', index: best.index };
+      }
+    }
 
     const messages: ChatMessage[] = [
       { role: 'system', content: SYSTEM },
@@ -74,9 +97,14 @@ function renderContext(ctx: DecisionContext): string {
   if (ctx.goal) lines.push(`Goal: ${ctx.goal}`);
   lines.push(`Screen: ${ctx.screen.title ?? '(untitled)'} — seen ${ctx.screen.visits}× so far`);
   if (ctx.history.length > 0) lines.push(`Recent path:\n${ctx.history.map((h) => `  - ${h}`).join('\n')}`);
-  lines.push('Candidates:');
+  lines.push('Candidates (idx · label · kind · screen-position · score):');
   for (const c of ctx.candidates) {
-    lines.push(`  [${c.index}] ${c.label}${c.editable ? ' (text field)' : ''} — score ${c.score}`);
+    const kind = c.editable ? 'text-field' : c.dropdown ? 'dropdown' : 'tap';
+    // Enrich with current text + vertical position so elements that share one
+    // resourceId (same label) are still distinguishable (AppAgent-v2 style).
+    const valued = c.text && c.text !== c.label ? ` value="${c.text}"` : '';
+    const pos = c.yFraction <= 0.25 ? 'top' : c.yFraction >= 0.8 ? 'bottom' : 'mid';
+    lines.push(`  [${c.index}] "${c.label}" · ${kind}${valued} · ${pos} · score ${c.score}`);
   }
   return lines.join('\n');
 }

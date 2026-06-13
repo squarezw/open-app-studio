@@ -46,6 +46,11 @@
           "enum": ["launch", "onboarding", "auth", "feed", "list", "detail", "form", "cart", "checkout", "settings", "profile", "search", "modal", "webview", "other"]
         },
         "title": { "type": "string", "description": "human-readable label assigned by the Annotator" },
+        "section": { "type": "string", "description": "bottom-tab section this screen belongs to (the tab label)" },
+        "phase": {
+          "enum": ["pre-main", "main"],
+          "description": "pre-main = splash/ad/login/onboarding before the tab bar; main = a tabbed screen or one reached from it"
+        },
         "patterns": { "type": "array", "items": { "$ref": "#/$defs/componentPattern" } },
         "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
         "visits": { "type": "integer", "minimum": 0 }
