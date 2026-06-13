@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ActionEdge, Flow, ScreenNode } from '@oas/flow-graph';
 import {
+  controlRun,
   fetchLayout,
   GATEWAY_URL,
   gatewayWsUrl,
@@ -92,6 +93,16 @@ export default function RunView({ id }: { id: string }) {
     const flow = graph.flows?.find((f: Flow) => f.id === selectedFlow);
     return flow ? new Set(flow.edgeIds) : undefined;
   }, [graph.flows, selectedFlow]);
+
+  // Optimistic run controls — the WS 'status' event confirms the new state.
+  async function control(action: 'pause' | 'resume' | 'stop') {
+    if (action !== 'stop') setRun((p) => (p ? { ...p, status: action === 'pause' ? 'paused' : 'running' } : p));
+    try {
+      await controlRun(id, action);
+    } catch (err) {
+      setError(`${action} failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   async function rerun() {
     try {
@@ -206,6 +217,10 @@ export default function RunView({ id }: { id: string }) {
           highlight={highlight}
           savedPositions={savedPositions}
           onSaveLayout={(positions) => saveLayout(id, positions)}
+          runStatus={run?.status}
+          onPause={() => control('pause')}
+          onResume={() => control('resume')}
+          onStop={() => control('stop')}
         />
       </div>
     </div>

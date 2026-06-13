@@ -28,10 +28,16 @@ export async function saveLayout(id: string, positions: NodePositions): Promise<
   if (!res.ok) throw new Error(`save layout failed: HTTP ${res.status}`);
 }
 
+/** Pause / resume / stop an in-flight run. */
+export async function controlRun(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void> {
+  const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/${action}`, { method: 'POST' });
+  if (!res.ok) throw new Error(`${action} failed: HTTP ${res.status}`);
+}
+
 export interface RunSummary {
   id: string;
   appId: string;
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'paused' | 'done' | 'error';
   rerunnable?: boolean;
   createdAt: string;
   coverage?: { nodes?: number; edges?: number; frontier?: number; actions?: number };

@@ -48,6 +48,8 @@ export interface ExploreOptions {
   onEvent?: (event: GraphEvent) => void;
   /** External stop condition, checked once per loop (budget, stall, abort). */
   shouldStop?: (counts: { nodes: number; edges: number; actions: number }) => boolean;
+  /** Awaited at the top of each step; blocks while the run is paused. */
+  waitWhilePaused?: () => Promise<void>;
   /** Decision strategy: which candidate to act on. Defaults to the heuristic policy. */
   decide?: Decider;
   /** High-level goal passed to a goal-directed (LLM) decider. */
@@ -187,6 +189,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   }
 
   for (let step = 0; step < maxActions; step++) {
+    if (opts.waitWhilePaused) await opts.waitWhilePaused(); // blocks while paused
     const tree = await driver.uiTree();
     const routeHint = await driver.routeHint();
 

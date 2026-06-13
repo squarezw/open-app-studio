@@ -178,6 +178,21 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
     return c.json({ runId: record.runId, mode: 'explore', brain: record.brain, rerunOf: prev.id }, 201);
   });
 
+  // Run controls (only meaningful while a run is in flight).
+  app.post('/api/runs/:id/pause', (c) => {
+    const status = manager.pause(c.req.param('id'));
+    return status ? c.json({ status }) : c.json({ error: 'run is not running' }, 409);
+  });
+  app.post('/api/runs/:id/resume', (c) => {
+    const status = manager.resume(c.req.param('id'));
+    return status ? c.json({ status }) : c.json({ error: 'run is not paused' }, 409);
+  });
+  app.post('/api/runs/:id/stop', (c) => {
+    return manager.stop(c.req.param('id'))
+      ? c.json({ ok: true })
+      : c.json({ error: 'run is not running' }, 409);
+  });
+
   app.get('/api/runs', (c) =>
     c.json(
       // Newest first (createdAt is an ISO string → lexicographic = chronological).

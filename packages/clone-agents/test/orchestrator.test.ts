@@ -66,4 +66,20 @@ describe('Orchestrator (fake demo shop)', () => {
     const ifg = await orchestrator.run();
     expect(ifg.meta.coverage!.actions!).toBeLessThanOrEqual(2);
   });
+
+  it('pauses and resumes', async () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const orchestrator = new Orchestrator(new FakeDriver(), { appId: 'com.fakeshop', maxActions: 60 });
+    const done = orchestrator.run();
+    orchestrator.pause(); // set before the first loop iteration (still launching)
+    let finished = false;
+    void done.then(() => {
+      finished = true;
+    });
+    await sleep(900); // past the launch tab-bar probe; main loop is now blocked
+    expect(finished).toBe(false); // paused → not progressing to completion
+    orchestrator.resume();
+    const ifg = await done;
+    expect(ifg.nodes).toHaveLength(6); // resumes and finishes the whole app
+  });
 });

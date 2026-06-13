@@ -25,6 +25,10 @@ export default function FlowCanvas({
   highlight,
   savedPositions,
   onSaveLayout,
+  runStatus,
+  onPause,
+  onResume,
+  onStop,
 }: {
   graph: PartialIfg;
   highlight?: Set<string>;
@@ -32,6 +36,11 @@ export default function FlowCanvas({
   savedPositions?: NodePositions;
   /** Persist the current arrangement; enables the Save tool when provided. */
   onSaveLayout?: (positions: NodePositions) => Promise<void>;
+  /** Live run state — while running/paused the toolbar shows run controls. */
+  runStatus?: 'running' | 'paused' | 'done' | 'error';
+  onPause?: () => void;
+  onResume?: () => void;
+  onStop?: () => void;
 }) {
   const instance = useRef<ReactFlowInstance | null>(null);
   const [layout, setLayout, onNodesChange] = useNodesState<Node>([]);
@@ -178,6 +187,26 @@ export default function FlowCanvas({
       style={{ background: 'var(--bg)' }}
     >
       <Panel position="top-right" className="canvas-tools">
+        {runStatus === 'running' || runStatus === 'paused' ? (
+          <>
+            <span className="run-state" data-state={runStatus}>
+              {runStatus === 'paused' ? '⏸ Paused' : '● Analyzing'}
+            </span>
+            {runStatus === 'running' ? (
+              <button title="Pause exploration" onClick={onPause} aria-label="Pause">
+                <PauseIcon />
+              </button>
+            ) : (
+              <button title="Resume exploration" onClick={onResume} aria-label="Resume">
+                <PlayIcon />
+              </button>
+            )}
+            <button title="Stop exploration" onClick={onStop} aria-label="Stop" className="danger">
+              <StopIcon />
+            </button>
+          </>
+        ) : (
+          <>
         <button
           title={showImages ? 'Hide screenshots' : 'Show screenshots'}
           onClick={() => setShowImages((v) => !v)}
@@ -216,6 +245,8 @@ export default function FlowCanvas({
           >
             {saveState === 'saved' ? <CheckIcon /> : <SaveIcon />}
           </button>
+        )}
+          </>
         )}
       </Panel>
       <Background gap={24} color="#1c2230" />
@@ -292,6 +323,31 @@ function CheckIcon() {
   return (
     <svg {...ICON}>
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg {...ICON} fill="currentColor" stroke="none">
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg {...ICON} fill="currentColor" stroke="none">
+      <path d="M7 5v14l12-7z" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg {...ICON} fill="currentColor" stroke="none">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
   );
 }

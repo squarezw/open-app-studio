@@ -6,7 +6,7 @@ import { Orchestrator, type CloneRunOptions } from '@oas/clone-agents';
 import type { DeviceDriver } from '@oas/device-bridge';
 import type { GraphEvent, InteractionFlowGraph } from '@oas/flow-graph';
 
-export type RunStatus = 'running' | 'done' | 'error';
+export type RunStatus = 'running' | 'paused' | 'done' | 'error';
 
 export interface RunEvent {
   seq: number;
@@ -47,7 +47,7 @@ type Listener = (event: RunEvent) => void;
  * re-run.
  */
 export class RunManager {
-  private runs = new Map<string, RunRecord & { listeners: Set<Listener> }>();
+  private runs = new Map<string, RunRecord & { listeners: Set<Listener>; orchestrator?: Orchestrator }>();
 
   constructor(private runsDir?: string) {}
 
@@ -66,12 +66,12 @@ export class RunManager {
         this.runs.set(id, {
           id,
           appId: meta.appId ?? meta.spec?.appId ?? id,
-          // a run that was 'running' when the server died is stale → mark error
-          status: meta.status === 'done' ? 'done' : meta.status === 'running' ? 'error' : (meta.status ?? 'error'),
+          // only 'done' survives a restart; anything in-flight (running/paused) is stale → error
+          status: meta.status === 'done' ? 'done' : 'error',
           createdAt: meta.createdAt ?? new Date(0).toISOString(),
           events: [],
           ifg,
-          error: meta.status === 'running' ? 'interrupted by server restart' : meta.error,
+          error: meta.status === 'done' ? meta.error : (meta.error ?? 'interrupted by server restart'),
           spec: meta.spec,
           listeners: new Set(),
         });
@@ -86,7 +86,7 @@ export class RunManager {
   start(spec: RunSpec, driver: DeviceDriver, opts: CloneRunOptions): RunRecord {
     const id = randomUUID();
     const artifactsDir = this.runsDir ? join(this.runsDir, id) : undefined;
-    const record: RunRecord & { listeners: Set<Listener> } = {
+    const record: RunRecord & { listeners: Set<Listener>; orchestrator?: Orchestrator } = {
       id,
       appId: spec.appId,
       status: 'running',
@@ -99,6 +99,7 @@ export class RunManager {
     if (artifactsDir) void this.persist(record, artifactsDir);
 
     const orchestrator = new Orchestrator(driver, { ...opts, appId: spec.appId, outDir: artifactsDir ?? opts.outDir });
+    record.orchestrator = orchestrator;
     orchestrator.on('graph', (e: GraphEvent) => this.push(record, 'graph', e));
     orchestrator.on('log', (m: string) => this.push(record, 'log', m));
 
@@ -145,6 +146,34 @@ export class RunManager {
 
   list(): RunRecord[] {
     return [...this.runs.values()];
+  }
+
+  /** Pause a running exploration. Returns the new status, or null if not running. */
+  pause(id: string): RunStatus | null {
+    const record = this.runs.get(id);
+    if (!record || record.status !== 'running' || !record.orchestrator) return null;
+    record.orchestrator.pause();
+    record.status = 'paused';
+    this.push(record, 'status', { status: 'paused' });
+    return 'paused';
+  }
+
+  /** Resume a paused exploration. */
+  resume(id: string): RunStatus | null {
+    const record = this.runs.get(id);
+    if (!record || record.status !== 'paused' || !record.orchestrator) return null;
+    record.orchestrator.resume();
+    record.status = 'running';
+    this.push(record, 'status', { status: 'running' });
+    return 'running';
+  }
+
+  /** Stop a running/paused exploration; it ends with the graph gathered so far. */
+  stop(id: string): boolean {
+    const record = this.runs.get(id);
+    if (!record || (record.status !== 'running' && record.status !== 'paused') || !record.orchestrator) return false;
+    record.orchestrator.stop(); // loop breaks → run() resolves → status becomes 'done'
+    return true;
   }
 
   subscribe(id: string, listener: Listener): () => void {

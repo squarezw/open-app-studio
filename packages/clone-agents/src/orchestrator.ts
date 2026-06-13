@@ -35,6 +35,7 @@ export interface CloneRunOptions {
 
 export class Orchestrator extends EventEmitter {
   private stopped = false;
+  private paused = false;
 
   constructor(
     private driver: DeviceDriver,
@@ -46,6 +47,16 @@ export class Orchestrator extends EventEmitter {
   /** Cooperative abort: takes effect at the next loop iteration. */
   stop(): void {
     this.stopped = true;
+    this.paused = false; // unblock a paused loop so it can observe the stop
+  }
+
+  /** Pause exploration at the next loop iteration (the loop blocks until resume/stop). */
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    this.paused = false;
   }
 
   async run(): Promise<InteractionFlowGraph> {
@@ -75,6 +86,9 @@ export class Orchestrator extends EventEmitter {
             return true;
           }
           return false;
+        },
+        waitWhilePaused: async () => {
+          while (this.paused && !this.stopped) await new Promise((r) => setTimeout(r, 200));
         },
       });
 

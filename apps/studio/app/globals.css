@@ -156,6 +156,21 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .canvas-tools button[data-state="on"] { color: #82aaff; border-color: #3a4a6a; }
 .canvas-tools button[data-state="off"] { color: var(--muted); opacity: 0.6; }
 .canvas-tools .sep { width: 1px; align-self: stretch; background: var(--border-strong); margin: 0 2px; }
+.canvas-tools button.danger:hover { color: #ff5370; border-color: #ff5370; }
+/* Run-state pill shown while exploring. */
+.canvas-tools .run-state {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+}
+.canvas-tools .run-state[data-state="running"] { color: #c3e88d; }
+.canvas-tools .run-state[data-state="paused"] { color: #ffcb6b; }
 
 .error-box { color: #ff5370; padding: 40px; text-align: center; }
 
