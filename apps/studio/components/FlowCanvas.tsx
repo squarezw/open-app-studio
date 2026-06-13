@@ -29,9 +29,12 @@ export default function FlowCanvas({
   onPause,
   onResume,
   onStop,
+  onEdgeSelect,
 }: {
   graph: PartialIfg;
   highlight?: Set<string>;
+  /** Clicking an edge selects the path(s) running through it. */
+  onEdgeSelect?: (edgeId: string) => void;
   /** Persisted node positions to restore (overrides the auto-layout). */
   savedPositions?: NodePositions;
   /** Persist the current arrangement; enables the Save tool when provided. */
@@ -122,14 +125,14 @@ export default function FlowCanvas({
     () =>
       layout.map((n) => ({
         ...n,
-        data: { ...n.data, showTaps },
+        data: { ...n.data, showTaps, highlightEdges: highlight },
         style: {
           ...n.style,
           opacity: dim && !highlightedNodeIds!.has(n.id) ? 0.18 : 1,
           transition: 'opacity 200ms',
         },
       })),
-    [layout, dim, highlightedNodeIds, showTaps],
+    [layout, dim, highlightedNodeIds, showTaps, highlight],
   );
 
   // Re-fit when the node count changes, or when toggling images reflows the
@@ -182,6 +185,7 @@ export default function FlowCanvas({
         instance.current = inst;
         inst.fitView({ padding: 0.2 });
       }}
+      onEdgeClick={(_, edge) => onEdgeSelect?.(edge.id)}
       nodesDraggable
       nodesConnectable={false}
       style={{ background: 'var(--bg)' }}

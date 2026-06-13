@@ -15,6 +15,8 @@ interface ScreenData {
   hasTabbar?: boolean;
   taps?: TapMarker[];
   showTaps?: boolean;
+  /** When a flow/edge is selected, only its tap markers show (others hidden). */
+  highlightEdges?: Set<string>;
 }
 
 export default function ScreenNodeCard({ data }: NodeProps) {
@@ -41,14 +43,16 @@ export default function ScreenNodeCard({ data }: NodeProps) {
           />
           {d.showTaps &&
             nat &&
-            d.taps?.map((t, i) => (
-              <span
-                key={i}
-                className="tap-marker"
-                style={{ left: `${(t.x / nat.w) * 100}%`, top: `${(t.y / nat.h) * 100}%` }}
-                title={t.label}
-              />
-            ))}
+            d.taps
+              ?.filter((t) => !d.highlightEdges || d.highlightEdges.has(t.edgeId))
+              .map((t, i) => (
+                <span
+                  key={i}
+                  className="tap-marker"
+                  style={{ left: `${(t.x / nat.w) * 100}%`, top: `${(t.y / nat.h) * 100}%` }}
+                  title={t.label}
+                />
+              ))}
         </div>
       )}
       <div className="title">{d.title}</div>

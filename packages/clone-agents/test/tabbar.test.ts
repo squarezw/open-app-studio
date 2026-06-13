@@ -43,6 +43,24 @@ describe('detectTabBar', () => {
     expect(tabs?.map((t) => t.label)).toEqual(['Feed', 'Browse', 'Me']);
   });
 
+  it('detects tabs by resource-id shape (iHerb-style *_dest), even off the bottom band', () => {
+    // No nav container, tabs sit at ~0.72 of height (geometry band would miss),
+    // but their resourceIds end in _dest — the id signal catches them.
+    const bar: UiNode = {
+      className: 'android.widget.FrameLayout',
+      bounds: { x: 0, y: 0, w: 1080, h: 2400 },
+      children: [
+        { className: 'V', resourceId: 'com.iherb:id/home_dest', clickable: true, contentDesc: 'Home', bounds: { x: 0, y: 1720, w: 216, h: 120 }, children: [] },
+        { className: 'V', resourceId: 'com.iherb:id/explore_dest', clickable: true, contentDesc: 'Explore', bounds: { x: 216, y: 1720, w: 216, h: 120 }, children: [] },
+        { className: 'V', resourceId: 'com.iherb:id/cart_dest', clickable: true, contentDesc: 'Cart', bounds: { x: 648, y: 1720, w: 216, h: 120 }, children: [] },
+        { className: 'V', resourceId: 'com.iherb:id/me_dest', clickable: true, contentDesc: 'Me', bounds: { x: 864, y: 1720, w: 216, h: 120 }, children: [] },
+      ],
+    };
+    const tabs = detectTabBar(bar);
+    expect(tabs?.map((t) => t.label)).toEqual(['Home', 'Explore', 'Cart', 'Me']);
+    expect(tabs?.map((t) => t.selector.resourceId)).toContain('com.iherb:id/cart_dest');
+  });
+
   it('does not mistake a single corner button for a tab bar', () => {
     const fab: UiNode = {
       className: 'android.widget.FrameLayout',

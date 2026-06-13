@@ -14,6 +14,7 @@ export interface TapMarker {
   x: number;
   y: number;
   label: string;
+  edgeId: string;
 }
 
 export interface FlowNode {
@@ -63,7 +64,7 @@ export function ifgToFlow(
     const p = e.action.point;
     if (!p || e.action.kind === 'back' || e.action.kind === 'scroll') continue;
     const arr = tapsByNode.get(e.from) ?? [];
-    arr.push({ x: p.x, y: p.y, label: `${edgeLabel(e)} → ${titleById.get(e.to) ?? e.to}` });
+    arr.push({ x: p.x, y: p.y, label: `${edgeLabel(e)} → ${titleById.get(e.to) ?? e.to}`, edgeId: e.id });
     tapsByNode.set(e.from, arr);
   }
 
