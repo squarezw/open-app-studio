@@ -331,15 +331,26 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     }
 
     // back is being eaten by a modal — stop backing, tap a candidate to escape
-    // (e.g. "Leave" on a discard dialog). If there's nothing to tap, stop.
+    // (e.g. "Leave" on a discard dialog).
     if (decision.act === 'back' && backWasNoOp) {
       if (candidates.length > 0) {
         const best = candidates.reduce((a, b) => (b.score > a.score ? b : a));
         decision = best.editable
           ? { act: 'type', index: best.index, reason: 'back trapped by a modal; interacting to escape' }
           : { act: 'tap', index: best.index, reason: 'back trapped by a modal; tapping to escape' };
+      } else if (graph.hasAnyUntried() && consecutiveRelaunches < 3) {
+        // Trapped on a modal with nothing to tap (e.g. a wheel-picker sheet that
+        // exposes no clickable items and eats back), but there's still untried
+        // frontier elsewhere. Don't kill the run — relaunch to a known state and
+        // keep exploring (tried-state persists, so we won't redo this path).
+        consecutiveRelaunches += 1;
+        log(`[${step}] ${nodeId} trapped modal w/ no candidates — relaunching ${opts.appId} to continue`);
+        await driver.launch(opts.appId);
+        pending = undefined;
+        await driver.waitForIdle();
+        continue;
       } else {
-        decision = { act: 'stop', reason: 'back trapped and nothing to tap' };
+        decision = { act: 'stop', reason: graph.hasAnyUntried() ? 'trapped; relaunch budget exhausted' : 'trapped; nothing left to explore' };
       }
     }
 
