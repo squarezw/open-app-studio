@@ -158,6 +158,26 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   const tabSelKeysSeen = new Set<string>();
   const interactablesByNode = new Map<string, Set<string>>();
 
+  // Probe for the bottom tab bar before exploring. The tabbed main UI can take
+  // a beat to render after launch; if we miss it on the first frame we'd treat
+  // a tab as an ordinary button and hop between sections. Once found, every tab
+  // is excluded from free exploration and each becomes its own section root.
+  for (let probe = 0; probe < 3 && !mainReached; probe++) {
+    await driver.waitForIdle();
+    const probed = detectTabBar(await driver.uiTree());
+    if (probed) {
+      tabBar = probed;
+      mainReached = true;
+      for (const t of probed) tabSelKeysSeen.add(selectorKey(t.selector));
+      currentSection = probed[0]?.label; // launch lands on the first tab's home
+      pendingTabTitle = probed[0]?.label;
+      if (probed[0]) tabsVisited.add(tabKey(probed[0]));
+      log(`launch UI has a tab bar — ${probed.length} tabs: ${probed.map((t) => t.label).join(', ')}; each tab is a section`);
+    } else if (probe < 2) {
+      await sleep(250);
+    }
+  }
+
   for (let step = 0; step < maxActions; step++) {
     const tree = await driver.uiTree();
     const routeHint = await driver.routeHint();
@@ -202,7 +222,12 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       tabBar = tabsHere;
       for (const t of tabsHere) tabSelKeysSeen.add(selectorKey(t.selector));
       if (!mainReached) {
+        // First tabbed screen reached mid-run (e.g. after login) — it's the
+        // first tab's home; name it after that tab and mark the tab visited.
         mainReached = true;
+        currentSection = tabsHere[0]?.label;
+        if (tabsHere[0]) tabsVisited.add(tabKey(tabsHere[0]));
+        if (tabsHere[0]?.label) graph.setTitle(nodeId, tabsHere[0].label);
         log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
       }
       graph.notePattern(nodeId, { kind: 'tabbar' });
@@ -342,15 +367,14 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       continue;
     }
 
-    // Tab bars are driven explicitly (one section at a time), not as ordinary
-    // candidates — keep them out of in-section exploration so a section is
-    // exhausted before we switch tabs.
-    const tabSelKeys = new Set((tabBar ?? []).map((t) => selectorKey(t.selector)));
-
     const candidates: Candidate[] = [];
     for (const cand of interactables) {
       if (!untriedKeys.has(selectorKey(cand.selector))) continue;
-      if (tabSelKeys.has(selectorKey(cand.selector))) {
+      // Tabs are top-level entries driven explicitly (one section at a time),
+      // never tapped as ordinary candidates — otherwise free exploration would
+      // hop from one bar to another. Excluded by the accumulated tab-selector
+      // set, so this holds even on a screen where detection missed the bar.
+      if (tabSelKeysSeen.has(selectorKey(cand.selector))) {
         graph.markTried(nodeId, cand.selector);
         continue;
       }
@@ -444,8 +468,13 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     // entry. When the decider would back out of (or stop on) an exhausted
     // section, jump to the next unvisited tab instead — so each section is
     // explored as its own DFS root before the run ends.
-    if (mainReached && tabsHere && (decision.act === 'back' || decision.act === 'stop')) {
-      const nextTab = tabsHere.find((t) => !tabsVisited.has(tabKey(t)));
+    // The current screen shows the tab bar if detection found it, or (when
+    // detection missed it) if this node's interactables include ≥2 known tabs.
+    const screenShowsTabBar =
+      tabsHere !== undefined ||
+      (nodeKeys ? [...tabSelKeysSeen].filter((k) => nodeKeys!.has(k)).length >= 2 : false);
+    if (mainReached && tabBar && screenShowsTabBar && (decision.act === 'back' || decision.act === 'stop')) {
+      const nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
       if (nextTab) {
         tabsVisited.add(tabKey(nextTab));
         currentSection = nextTab.label;
