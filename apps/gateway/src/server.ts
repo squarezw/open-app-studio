@@ -10,7 +10,13 @@ import {
   provisionalIfgFromMetadata,
   type Decider,
 } from '@oas/clone-agents';
-import { AdbDriver, AppiumDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
+import {
+  AdbDriver,
+  AppiumDriver,
+  DEMO_TABBED_APP,
+  FakeDriver,
+  type DeviceDriver,
+} from '@oas/device-bridge';
 import { replayScript } from '@oas/flow-graph';
 import type { AppSpec } from '@oas/app-spec';
 import { generateComponent, type GenerateResult } from '@oas/component-gen';
@@ -69,7 +75,7 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
   function beginRun(spec: RunSpec): { runId: string; brain: 'llm' | 'heuristic' } {
     const driver: DeviceDriver =
       spec.driver === 'fake'
-        ? new FakeDriver()
+        ? new FakeDriver(spec.appId === 'com.tabbed' ? DEMO_TABBED_APP : undefined)
         : spec.driver === 'appium'
           ? new AppiumDriver({ serial: spec.serial, log: (m) => console.log(`[appium] ${m}`) })
           : new AdbDriver({ serial: spec.serial, log: (m) => console.log(`[adb] ${m}`) });

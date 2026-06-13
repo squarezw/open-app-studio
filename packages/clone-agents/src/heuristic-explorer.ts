@@ -12,6 +12,7 @@ import {
   type UiNode,
 } from '@oas/flow-graph';
 import { scoreCandidate, signatureOf } from './policy.js';
+import { detectTabBar, tabKey, type TabItem } from './tabbar.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -141,6 +142,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   const destinationOf = new Map<string, string>();
   const visitCount = new Map<string, number>();
 
+  // Tabbar awareness. The first screen carrying a bottom tab bar is the tabbed
+  // "main" UI; screens before it (splash/ad/login/onboarding) are pre-main.
+  // Each tab is a top-level entry explored as its own DFS section root.
+  let tabBar: TabItem[] | undefined;
+  let mainReached = false;
+  let currentSection: string | undefined;
+  const tabsVisited = new Set<string>();
+  const preMainNodes: string[] = [];
+
   for (let step = 0; step < maxActions; step++) {
     const tree = await driver.uiTree();
     const routeHint = await driver.routeHint();
@@ -177,6 +187,26 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     launchNodeId ??= nodeId;
     appPackage ??= pkg; // first in-app screen defines the target package
     visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
+
+    // Detect the bottom tab bar. The first screen that has one is the tabbed
+    // main UI; from there each tab is a top-level section root (handled below).
+    const tabsHere = detectTabBar(tree);
+    if (tabsHere) {
+      tabBar = tabsHere;
+      if (!mainReached) {
+        mainReached = true;
+        log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
+      }
+      graph.notePattern(nodeId, { kind: 'tabbar' });
+    }
+    if (mainReached) {
+      graph.markPhase(nodeId, 'main');
+      if (currentSection) graph.markSection(nodeId, currentSection);
+    } else {
+      // Provisional: only committed as pre-main if a tab bar is ever reached.
+      // Apps with no tab bar are free-explored and carry no phase at all.
+      preMainNodes.push(nodeId);
+    }
 
     // A `back` that left us on the same screen is a modal eating the gesture
     // (e.g. a "discard changes?" dialog). Don't keep backing into it.
@@ -289,9 +319,18 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       continue;
     }
 
+    // Tab bars are driven explicitly (one section at a time), not as ordinary
+    // candidates — keep them out of in-section exploration so a section is
+    // exhausted before we switch tabs.
+    const tabSelKeys = new Set((tabBar ?? []).map((t) => selectorKey(t.selector)));
+
     const candidates: Candidate[] = [];
     for (const cand of interactables) {
       if (!untriedKeys.has(selectorKey(cand.selector))) continue;
+      if (tabSelKeys.has(selectorKey(cand.selector))) {
+        graph.markTried(nodeId, cand.selector);
+        continue;
+      }
       const signature = signatureOf(cand.selector);
       const dest = destinationOf.get(signature);
       if (dest && dest !== nodeId && !graph.hasUntried(dest)) {
@@ -354,11 +393,6 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       }
     }
 
-    if (decision.act === 'stop') {
-      log(`[${step}] decider: stop${decision.reason ? ` — ${decision.reason}` : ''}`);
-      break;
-    }
-
     // Before leaving an exhausted-but-scrollable screen, scroll down to reveal
     // below-the-fold content. Bounded: at most MAX_SCROLLS_PER_SCREEN per
     // screen, and we stop the moment a scroll changes nothing (bottom reached,
@@ -381,6 +415,35 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       consecutiveBacks = 0;
       await driver.waitForIdle();
       continue;
+    }
+
+    // Tabbar-aware: once the tabbed main UI is reached, every bar is a top-level
+    // entry. When the decider would back out of (or stop on) an exhausted
+    // section, jump to the next unvisited tab instead — so each section is
+    // explored as its own DFS root before the run ends.
+    if (mainReached && tabsHere && (decision.act === 'back' || decision.act === 'stop')) {
+      const nextTab = tabsHere.find((t) => !tabsVisited.has(tabKey(t)));
+      if (nextTab) {
+        tabsVisited.add(tabKey(nextTab));
+        currentSection = nextTab.label;
+        graph.markTried(nodeId, nextTab.selector);
+        log(`[${step}] ${nodeId} section done — switch to tab "${nextTab.label}"`);
+        await driver.tap(nextTab.center);
+        pending = {
+          fromId: nodeId,
+          action: { kind: 'tap', selector: nextTab.selector, point: nextTab.center },
+          signature: signatureOf(nextTab.selector),
+        };
+        history.push(`${title ?? nodeId} → tab ${nextTab.label}`);
+        consecutiveBacks = 0;
+        await driver.waitForIdle();
+        continue;
+      }
+    }
+
+    if (decision.act === 'stop') {
+      log(`[${step}] decider: stop${decision.reason ? ` — ${decision.reason}` : ''}`);
+      break;
     }
 
     if (decision.act === 'back') {
@@ -428,6 +491,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     }
     await driver.waitForIdle();
   }
+
+  // Only commit pre-main tags if a tabbed main UI was actually found. Apps with
+  // no tab bar are free-explored and carry no phase concept.
+  if (mainReached) for (const id of preMainNodes) graph.markPhase(id, 'pre-main');
 
   return graph.toIFG();
 }

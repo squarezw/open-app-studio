@@ -2,6 +2,7 @@ import { fingerprint } from './fingerprint.js';
 import type {
   Action,
   ActionEdge,
+  ComponentPattern,
   Evidence,
   Flow,
   FrontierItem,
@@ -9,6 +10,7 @@ import type {
   IfgMeta,
   InteractionFlowGraph,
   ScreenNode,
+  ScreenPhase,
   Selector,
   UiNode,
 } from './types.js';
@@ -120,6 +122,36 @@ export class GraphBuilder {
     if (opts.latencyMs !== undefined) edge.latencyMs = opts.latencyMs;
     this.onEvent?.({ type: 'edge', edge, isNew });
     return edge.id;
+  }
+
+  private nodeById(nodeId: string): ScreenNode | undefined {
+    for (const node of this.nodesByFingerprint.values()) if (node.id === nodeId) return node;
+    return undefined;
+  }
+
+  /** Tags a screen's phase (pre-main vs main). First non-undefined wins for pre-main;
+   * 'main' always wins once a tab bar is reached (a pre-main screen never becomes main). */
+  markPhase(nodeId: string, phase: ScreenPhase): void {
+    const node = this.nodeById(nodeId);
+    if (!node) return;
+    if (phase === 'main' || node.phase === undefined) node.phase = phase;
+  }
+
+  /** Records the bottom-tab section a screen belongs to (the tab's label). */
+  markSection(nodeId: string, section: string): void {
+    const node = this.nodeById(nodeId);
+    if (node && !node.section) node.section = section;
+  }
+
+  /** Adds a component pattern (e.g. the detected tabbar) to a node, deduped by kind+region. */
+  notePattern(nodeId: string, pattern: ComponentPattern): void {
+    const node = this.nodeById(nodeId);
+    if (!node) return;
+    node.patterns ??= [];
+    const key = `${pattern.kind}:${JSON.stringify(pattern.region ?? null)}`;
+    if (!node.patterns.some((p) => `${p.kind}:${JSON.stringify(p.region ?? null)}` === key)) {
+      node.patterns.push(pattern);
+    }
   }
 
   /** Marks an interactable element as seen on a node (frontier candidate). */

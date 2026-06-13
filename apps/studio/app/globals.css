@@ -104,6 +104,22 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .screen-node[data-role="profile"]  { border-color: #c3e88d; }
 .screen-node[data-role="settings"] { border-color: #a3aed0; }
 .screen-node[data-role="feed"]     { border-color: #ffcb6b; }
+/* Pre-main screens (splash/ad/login/onboarding before the tab bar) read as muted. */
+.screen-node[data-phase="pre-main"] { border-style: dashed; opacity: 0.92; }
+
+.screen-node .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.screen-node .badge {
+  font-size: 9px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.screen-node .badge.pre-main { background: #2a2440; color: #c792ea; }
+.screen-node .badge.tabbar   { background: #1e3340; color: #89ddff; }
+.screen-node .badge.section  { background: #23321e; color: #c3e88d; text-transform: none; }
 
 .error-box { color: #ff5370; padding: 40px; text-align: center; }
 

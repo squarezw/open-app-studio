@@ -151,3 +151,69 @@ export const DEMO_SHOP_APP: FakeApp = {
     cart: { 'com.fakeshop:id/btn_checkout': 'checkout' },
   },
 };
+
+/** A bottom-tab item: a clickable frame in the bottom band, evenly spaced. */
+function tab(resourceId: string, label: string, x: number): UiNode {
+  return {
+    className: 'android.widget.FrameLayout',
+    resourceId,
+    contentDesc: label,
+    clickable: true,
+    enabled: true,
+    bounds: { x, y: 2280, w: 270, h: 120 },
+    children: [],
+  };
+}
+
+/** A BottomNavigationView with the four standard tabs, shared by every main screen. */
+function tabbar(): UiNode {
+  return {
+    className: 'com.google.android.material.bottomnavigation.BottomNavigationView',
+    resourceId: 'com.tabbed:id/bottom_nav',
+    bounds: { x: 0, y: 2280, w: 1080, h: 120 },
+    children: [
+      tab('com.tabbed:id/nav_home', 'Home', 0),
+      tab('com.tabbed:id/nav_search', 'Search', 270),
+      tab('com.tabbed:id/nav_cart', 'Cart', 540),
+      tab('com.tabbed:id/nav_profile', 'Profile', 810),
+    ],
+  };
+}
+
+const NAV: Record<string, string> = {
+  'com.tabbed:id/nav_home': 'main',
+  'com.tabbed:id/nav_search': 'tsearch',
+  'com.tabbed:id/nav_cart': 'tcart',
+  'com.tabbed:id/nav_profile': 'tprofile',
+};
+
+/**
+ * A tabbed app for exercising tabbar-aware exploration:
+ *
+ *   splash ─Continue→ login ─Sign in→ main [Home·Search·Cart·Profile tabs]
+ *   main ─Promo→ promo (detail, no tabs)
+ *   Cart tab → tcart ─Checkout→ checkout (detail, no tabs)
+ *
+ * splash + login are pre-main; everything from `main` on is main-phase.
+ */
+export const DEMO_TABBED_APP: FakeApp = {
+  initial: 'splash',
+  screens: {
+    splash: screen('splash', [title('Welcome'), btn('com.tabbed:id/btn_continue', 'Continue', 1200)]),
+    login: screen('login', [title('Sign In'), btn('com.tabbed:id/btn_signin', 'Sign in', 1200)]),
+    main: screen('main', [title('Home Feed'), btn('com.tabbed:id/btn_promo', 'Promo', 400), tabbar()]),
+    promo: screen('promo', [title('Promo Details')]),
+    tsearch: screen('tsearch', [title('Search'), tabbar()]),
+    tcart: screen('tcart', [title('Cart'), btn('com.tabbed:id/btn_checkout', 'Checkout', 400), tabbar()]),
+    checkout: screen('checkout', [title('Checkout')]),
+    tprofile: screen('tprofile', [title('Profile'), tabbar()]),
+  },
+  transitions: {
+    splash: { 'com.tabbed:id/btn_continue': 'login' },
+    login: { 'com.tabbed:id/btn_signin': 'main' },
+    main: { 'com.tabbed:id/btn_promo': 'promo', ...NAV },
+    tsearch: { ...NAV },
+    tcart: { 'com.tabbed:id/btn_checkout': 'checkout', ...NAV },
+    tprofile: { ...NAV },
+  },
+};
