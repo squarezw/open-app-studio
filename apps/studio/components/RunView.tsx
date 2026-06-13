@@ -90,6 +90,18 @@ export default function RunView({ id }: { id: string }) {
     };
   }, [id]);
 
+  // Esc clears the focused flow/edge (back to the full graph).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedFlow(undefined);
+        setSelectedEdge(undefined);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const highlight = useMemo(() => {
     if (selectedFlow) {
       const flow = graph.flows?.find((f: Flow) => f.id === selectedFlow);
