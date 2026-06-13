@@ -55,3 +55,49 @@ export function parseUiautomatorXml(xml: string): UiNode {
   if (roots.length === 1) return toUiNode(roots[0]!);
   return { className: 'hierarchy', enabled: true, children: roots.map(toUiNode) };
 }
+
+/**
+ * Parses Appium UiAutomator2 `getPageSource` XML. Unlike `uiautomator dump`
+ * (generic `<node class=…>`), Appium names each element tag after its class
+ * (e.g. `<android.widget.EditText resource-id=… text=… bounds=…>`), so we walk
+ * with preserveOrder and read the `class` attribute. Same attribute names.
+ */
+export function parseAppiumSource(xml: string): UiNode {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '',
+    parseAttributeValue: false,
+    parseTagValue: false,
+    preserveOrder: true,
+  });
+  const doc = parser.parse(xml) as OrderedNode[];
+  const hierarchy = doc.find((n) => 'hierarchy' in n);
+  if (!hierarchy) throw new Error('appium source: no <hierarchy> root');
+  const roots = (hierarchy.hierarchy as OrderedNode[]).filter(isElement);
+  if (roots.length === 1) return orderedToUiNode(roots[0]!);
+  return { className: 'hierarchy', enabled: true, children: roots.map(orderedToUiNode) };
+}
+
+type OrderedNode = Record<string, unknown> & { ':@'?: Record<string, string> };
+
+function isElement(n: OrderedNode): boolean {
+  return Object.keys(n).some((k) => k !== ':@');
+}
+
+function orderedToUiNode(elem: OrderedNode): UiNode {
+  const tag = Object.keys(elem).find((k) => k !== ':@') ?? 'unknown';
+  const a = elem[':@'] ?? {};
+  const childrenRaw = (elem[tag] as OrderedNode[] | undefined)?.filter(isElement) ?? [];
+  return {
+    className: a['class'] || tag,
+    ...(a['resource-id'] ? { resourceId: a['resource-id'] } : {}),
+    ...(a['text'] ? { text: a['text'] } : {}),
+    ...(a['content-desc'] ? { contentDesc: a['content-desc'] } : {}),
+    ...(parseBounds(a['bounds']) ? { bounds: parseBounds(a['bounds']) } : {}),
+    clickable: a['clickable'] === 'true',
+    scrollable: a['scrollable'] === 'true',
+    enabled: a['enabled'] !== 'false',
+    focusable: a['focusable'] === 'true',
+    children: childrenRaw.map(orderedToUiNode),
+  };
+}

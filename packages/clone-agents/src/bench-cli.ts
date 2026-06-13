@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { AdbDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
+import { AdbDriver, AppiumDriver, FakeDriver, type DeviceDriver } from '@oas/device-bridge';
 import { renderScorecard, runDeviceBenchmark } from './benchmark.js';
 
 const HELP = `oas-bench — score a DeviceDriver against OAS's reliability pain cases.
@@ -12,6 +12,7 @@ text fields + dropdowns) FIRST, then run this for each driver to compare.
 
 Usage:
   oas-bench --driver adb [--serial <id>] [--out bench/adb.md]
+  oas-bench --driver appium [--appium-url http://127.0.0.1:4723] [--out bench/appium.md]
   oas-bench --driver fake        # smoke-test the harness with no device
 
 Probes: dup-resourceId · keyboard-detect · text-replace · scroll-coverage · latency
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
       driver: { type: 'string', default: 'adb' },
       serial: { type: 'string' },
       out: { type: 'string' },
+      'appium-url': { type: 'string' },
       help: { type: 'boolean', default: false },
     },
   });
@@ -34,7 +36,9 @@ async function main(): Promise<void> {
   const driver: DeviceDriver =
     values.driver === 'fake'
       ? new FakeDriver()
-      : new AdbDriver({ serial: values.serial, log: (m) => console.log(`[adb] ${m}`) });
+      : values.driver === 'appium'
+        ? new AppiumDriver({ baseUrl: values['appium-url'], serial: values.serial, log: (m) => console.log(`[appium] ${m}`) })
+        : new AdbDriver({ serial: values.serial, log: (m) => console.log(`[adb] ${m}`) });
 
   const card = await runDeviceBenchmark(driver, { log: (m) => console.log(m) });
   const md = renderScorecard(card, values.driver!);
