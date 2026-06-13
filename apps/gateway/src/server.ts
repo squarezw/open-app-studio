@@ -13,7 +13,9 @@ import {
 import {
   AdbDriver,
   AppiumDriver,
+  DEMO_LATE_TABBAR_APP,
   DEMO_TABBED_APP,
+  DEMO_TABBED_ENTRY_APP,
   FakeDriver,
   type DeviceDriver,
 } from '@oas/device-bridge';
@@ -73,9 +75,17 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
 
   /** Build the driver + brain from a (re-runnable) spec and start the run. */
   function beginRun(spec: RunSpec): { runId: string; brain: 'llm' | 'heuristic' } {
+    const fakeApp =
+      spec.appId === 'com.tabbed'
+        ? DEMO_TABBED_APP
+        : spec.appId === 'com.entry'
+          ? DEMO_TABBED_ENTRY_APP
+          : spec.appId === 'com.late'
+            ? DEMO_LATE_TABBAR_APP
+            : undefined;
     const driver: DeviceDriver =
       spec.driver === 'fake'
-        ? new FakeDriver(spec.appId === 'com.tabbed' ? DEMO_TABBED_APP : undefined)
+        ? new FakeDriver(fakeApp)
         : spec.driver === 'appium'
           ? new AppiumDriver({ serial: spec.serial, log: (m) => console.log(`[appium] ${m}`) })
           : new AdbDriver({ serial: spec.serial, log: (m) => console.log(`[adb] ${m}`) });

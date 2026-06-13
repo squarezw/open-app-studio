@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DeviceDriver } from '@oas/device-bridge';
 import {
@@ -147,9 +148,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // Each tab is a top-level entry explored as its own DFS section root.
   let tabBar: TabItem[] | undefined;
   let mainReached = false;
+  // True when the launch screen itself shows the tab bar (no pre-main gate) —
+  // then each tab is entered from the entry by relaunching, so every tab is a
+  // direct child of the app entry rather than of the last section's screen.
+  let entryHasTabBar = false;
   let currentSection: string | undefined;
   // Title to stamp on the next screen we land on (a tab's home → the tab label).
   let pendingTabTitle: string | undefined;
+  // After relaunching to the entry, the tab to tap from the entry screen.
+  let pendingTabSwitch: TabItem | undefined;
   const tabsVisited = new Set<string>();
   const preMainNodes: string[] = [];
   // Every tab selector ever detected, and each node's interactable keys — so we
@@ -168,6 +175,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     if (probed) {
       tabBar = probed;
       mainReached = true;
+      entryHasTabBar = true; // launch screen is the tabbed root
       for (const t of probed) tabSelKeysSeen.add(selectorKey(t.selector));
       currentSection = probed[0]?.label; // launch lands on the first tab's home
       pendingTabTitle = probed[0]?.label;
@@ -203,6 +211,14 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     let screenshotRef: string | undefined;
     if (opts.outDir) {
       screenshotRef = await driver.screenshot(join(opts.outDir, 'screens', `step_${step}.png`));
+      // Dump the raw UI tree alongside the screenshot — invaluable for debugging
+      // detection (e.g. why a tab bar was missed on a given screen).
+      try {
+        await mkdir(join(opts.outDir, 'trees'), { recursive: true });
+        await writeFile(join(opts.outDir, 'trees', `step_${step}.json`), JSON.stringify(tree));
+      } catch {
+        /* best-effort debug artifact */
+      }
     }
     const nodeId = graph.observe({
       tree,
@@ -265,6 +281,26 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     if (pendingTabTitle) {
       graph.setTitle(nodeId, pendingTabTitle);
       pendingTabTitle = undefined;
+    }
+
+    // Just relaunched to the app entry to enter the next tab — tap it from here,
+    // so the edge is entry → tab (each tab a direct child of the entry).
+    if (pendingTabSwitch) {
+      const tab = pendingTabSwitch;
+      pendingTabSwitch = undefined;
+      currentSection = tab.label;
+      pendingTabTitle = tab.label;
+      graph.markTried(nodeId, tab.selector);
+      log(`[${step}] entering tab "${tab.label}" from entry ${nodeId}`);
+      await driver.tap(tab.center);
+      pending = {
+        fromId: nodeId,
+        action: { kind: 'tap', selector: tab.selector, point: tab.center },
+        signature: signatureOf(tab.selector),
+      };
+      history.push(`${guessTitle(tree) ?? nodeId} → tab ${tab.label}`);
+      await driver.waitForIdle();
+      continue;
     }
 
     if (sameNodeStreak >= 12) {
@@ -477,8 +513,22 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       const nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
       if (nextTab) {
         tabsVisited.add(tabKey(nextTab));
+        consecutiveBacks = 0;
+        if (entryHasTabBar) {
+          // Enter the tab from the app entry: relaunch to the tabbed root, then
+          // tap the tab from there (next loop) so it's a direct child of the
+          // entry — not of whatever screen this section happened to end on.
+          log(`[${step}] section "${currentSection ?? ''}" done — relaunch & enter "${nextTab.label}" from the app entry`);
+          pendingTabSwitch = nextTab;
+          pending = undefined;
+          await driver.launch(opts.appId);
+          await driver.waitForIdle();
+          continue;
+        }
+        // Pre-main-gated app: relaunch wouldn't land on the tabs, so switch from
+        // the current screen (best-effort until pre-main replay lands).
         currentSection = nextTab.label;
-        pendingTabTitle = nextTab.label; // name the tab's home after the tab
+        pendingTabTitle = nextTab.label;
         graph.markTried(nodeId, nextTab.selector);
         log(`[${step}] ${nodeId} section done — switch to tab "${nextTab.label}"`);
         await driver.tap(nextTab.center);
@@ -488,7 +538,6 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
           signature: signatureOf(nextTab.selector),
         };
         history.push(`${title ?? nodeId} → tab ${nextTab.label}`);
-        consecutiveBacks = 0;
         await driver.waitForIdle();
         continue;
       }

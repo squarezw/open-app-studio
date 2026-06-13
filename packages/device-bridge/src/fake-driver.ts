@@ -263,3 +263,50 @@ export const DEMO_LATE_TABBAR_APP: FakeApp = {
     home: { 'com.late:id/btn_open': 'detail' },
   },
 };
+
+const ENTRY_NAV: Record<string, string> = {
+  'com.entry:id/nav_home': 'ehome',
+  'com.entry:id/nav_search': 'esearch',
+  'com.entry:id/nav_cart': 'ecart',
+  'com.entry:id/nav_me': 'eme',
+};
+
+function entryTabbar(): UiNode {
+  return {
+    className: 'com.google.android.material.bottomnavigation.BottomNavigationView',
+    resourceId: 'com.entry:id/bottom_nav',
+    bounds: { x: 0, y: 2280, w: 1080, h: 120 },
+    children: [
+      tab('com.entry:id/nav_home', 'Home', 0),
+      tab('com.entry:id/nav_search', 'Search', 270),
+      tab('com.entry:id/nav_cart', 'Cart', 540),
+      tab('com.entry:id/nav_me', 'Me', 810),
+    ],
+  };
+}
+
+/**
+ * Tabbed app whose LAUNCH screen IS the tabbed root (no splash/login) — like
+ * iHerb. Each tab is entered from the entry (relaunch → tap tab), so every tab
+ * is a direct child of the launch screen, not of the previous section.
+ *
+ *   ehome [Home·Search·Cart·Me] ─Banner→ promo
+ *   ecart ─Checkout→ echeckout
+ */
+export const DEMO_TABBED_ENTRY_APP: FakeApp = {
+  initial: 'ehome',
+  screens: {
+    ehome: screen('ehome', [title('Home'), btn('com.entry:id/banner', 'Banner', 400), entryTabbar()]),
+    promo: screen('promo', [title('Promo')]),
+    esearch: screen('esearch', [title('Search'), entryTabbar()]),
+    ecart: screen('ecart', [title('Cart'), btn('com.entry:id/co', 'Checkout', 400), entryTabbar()]),
+    echeckout: screen('echeckout', [title('Checkout')]),
+    eme: screen('eme', [title('My Account'), entryTabbar()]),
+  },
+  transitions: {
+    ehome: { 'com.entry:id/banner': 'promo', ...ENTRY_NAV },
+    esearch: { ...ENTRY_NAV },
+    ecart: { 'com.entry:id/co': 'echeckout', ...ENTRY_NAV },
+    eme: { ...ENTRY_NAV },
+  },
+};

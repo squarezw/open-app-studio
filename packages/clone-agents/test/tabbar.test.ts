@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEMO_LATE_TABBAR_APP, DEMO_SHOP_APP, DEMO_TABBED_APP, FakeDriver } from '@oas/device-bridge';
+import {
+  DEMO_LATE_TABBAR_APP,
+  DEMO_SHOP_APP,
+  DEMO_TABBED_APP,
+  DEMO_TABBED_ENTRY_APP,
+  FakeDriver,
+} from '@oas/device-bridge';
 import type { UiNode } from '@oas/flow-graph';
 import { Orchestrator } from '../src/orchestrator.js';
 import { detectTabBar } from '../src/tabbar.js';
@@ -91,6 +97,30 @@ describe('tabbar-aware exploration (tabbed demo app)', () => {
     expect(home.patterns?.some((p) => p.kind === 'tabbar')).toBe(true);
     // The launch landing is named after the first tab ("Feed"), not its top text.
     expect(home.title).toBe('Feed');
+  });
+
+  it('enters each tab from the app entry (tabs are direct children of launch)', async () => {
+    const orchestrator = new Orchestrator(new FakeDriver(DEMO_TABBED_ENTRY_APP), {
+      appId: 'com.entry',
+      maxActions: 80,
+    });
+    const ifg = await orchestrator.run();
+    const launchId = ifg.nodes[0]!.id; // the tabbed home (launch)
+    const byTitle = new Map(ifg.nodes.map((n) => [n.title, n]));
+
+    // tab landings are named after the tab
+    expect(byTitle.get('Me')).toBeDefined();
+    expect(byTitle.get('Search')).toBeDefined();
+    expect(byTitle.get('Cart')).toBeDefined();
+
+    // every tab is reached directly from the launch/entry screen, not via a
+    // sibling tab or a product page (the "To Me went Cart→Me" bug).
+    for (const label of ['Search', 'Cart', 'Me']) {
+      const node = byTitle.get(label)!;
+      const into = ifg.edges.filter((e) => e.to === node.id && e.action.kind !== 'back');
+      expect(into.length).toBeGreaterThan(0);
+      expect(into.every((e) => e.from === launchId)).toBe(true);
+    }
   });
 
   it('leaves phase undefined for an app with no tab bar', async () => {
