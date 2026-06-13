@@ -34,13 +34,12 @@ export default function FlowCanvas({
   onSaveLayout?: (positions: NodePositions) => Promise<void>;
 }) {
   const instance = useRef<ReactFlowInstance | null>(null);
-  // Nodes are draggable and their positions live here (not recomputed on every
-  // render), so a drag sticks. Edges + highlight styling stay derived.
   const [layout, setLayout, onNodesChange] = useNodesState<Node>([]);
-  // Nodes the user has dragged — their positions are never overwritten by the
-  // auto-layout / saved-layout sync below.
   const draggedRef = useRef(new Set<string>());
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // View toggles: show screenshots in cards, and show "what was tapped" on edges.
+  const [showImages, setShowImages] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
 
   // Node ids on the highlighted (selected) flow — its edges' endpoints.
   const highlightedNodeIds = useMemo(() => {
@@ -56,10 +55,10 @@ export default function FlowCanvas({
   }, [graph, highlight]);
 
   // Fold the graph into the draggable layout: keep a node's dragged position,
-  // else its saved position, else the auto-layout slot. New nodes from a live
-  // run appear at their auto-layout position.
+  // else its saved position, else the auto-layout slot (which depends on
+  // whether screenshots are shown — taller cards need more row spacing).
   useEffect(() => {
-    const auto = ifgToFlow(graph).nodes as unknown as Node[];
+    const auto = ifgToFlow(graph, { showImages }).nodes as unknown as Node[];
     setLayout((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]));
       return auto.map((n) => {
@@ -69,7 +68,7 @@ export default function FlowCanvas({
         return { ...n, position };
       });
     });
-  }, [graph, savedPositions, setLayout]);
+  }, [graph, savedPositions, showImages, setLayout]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -91,8 +90,8 @@ export default function FlowCanvas({
           id: e.id,
           source: e.source,
           target: e.target,
-          // Back edges stay unlabeled — their labels collide with the forward edge.
-          label: e.isBack ? undefined : e.label,
+          // "What was tapped to get here" — toggleable; back edges stay unlabeled.
+          label: showLabels && !e.isBack ? e.label : undefined,
           animated: on,
           style: on
             ? { stroke: '#ff5370', strokeWidth: 2.5 }
@@ -105,10 +104,9 @@ export default function FlowCanvas({
           labelBgStyle: { fill: '#0b0e14', fillOpacity: 0.85 },
         };
       }),
-    [graph, highlight, dim],
+    [graph, highlight, dim, showLabels],
   );
 
-  // Apply the highlight dimming to the user-positioned nodes at render time.
   const displayNodes: Node[] = useMemo(
     () =>
       layout.map((n) => ({
@@ -122,14 +120,13 @@ export default function FlowCanvas({
     [layout, dim, highlightedNodeIds],
   );
 
-  // Re-fit when the node count changes. A finished run loads all nodes in one
-  // batch AFTER mount, so the initial fitView (on an empty graph) would
-  // otherwise leave them off-screen.
+  // Re-fit when the node count changes, or when toggling images reflows the
+  // layout (cards change height → positions change).
   useEffect(() => {
     if (instance.current && layout.length > 0) {
       instance.current.fitView({ padding: 0.2, duration: 200 });
     }
-  }, [layout.length]);
+  }, [layout.length, showImages]);
 
   // Selecting a flow on the left pans/zooms the canvas to that flow's nodes.
   useEffect(() => {
@@ -141,12 +138,11 @@ export default function FlowCanvas({
     });
   }, [highlightedNodeIds]);
 
-  // "Tidy up": discard manual positions and restore the deterministic layout.
   const realign = useCallback(() => {
     draggedRef.current.clear();
-    setLayout(ifgToFlow(graph).nodes as unknown as Node[]);
+    setLayout(ifgToFlow(graph, { showImages }).nodes as unknown as Node[]);
     setTimeout(() => instance.current?.fitView({ padding: 0.2, duration: 300 }), 0);
-  }, [graph, setLayout]);
+  }, [graph, showImages, setLayout]);
 
   const save = useCallback(async () => {
     if (!onSaveLayout) return;
@@ -179,6 +175,23 @@ export default function FlowCanvas({
       style={{ background: 'var(--bg)' }}
     >
       <Panel position="top-right" className="canvas-tools">
+        <button
+          title={showImages ? 'Hide screenshots' : 'Show screenshots'}
+          onClick={() => setShowImages((v) => !v)}
+          data-state={showImages ? 'on' : 'off'}
+          aria-label="Toggle screenshots"
+        >
+          <ImageIcon />
+        </button>
+        <button
+          title={showLabels ? 'Hide tap labels' : 'Show tap labels'}
+          onClick={() => setShowLabels((v) => !v)}
+          data-state={showLabels ? 'on' : 'off'}
+          aria-label="Toggle edge labels"
+        >
+          <TagIcon />
+        </button>
+        <span className="sep" />
         <button title="Tidy up — restore the automatic layout" onClick={realign} aria-label="Tidy up layout">
           <GridIcon />
         </button>
@@ -211,6 +224,25 @@ const ICON = {
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
 };
+
+function ImageIcon() {
+  return (
+    <svg {...ICON}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <polyline points="21 15 16 10 5 21" />
+    </svg>
+  );
+}
+
+function TagIcon() {
+  return (
+    <svg {...ICON}>
+      <path d="M20.59 13.41 13.42 20.59a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
+    </svg>
+  );
+}
 
 function GridIcon() {
   return (

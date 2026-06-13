@@ -139,6 +139,10 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .canvas-tools button:hover { color: #82aaff; border-color: #82aaff; }
 .canvas-tools button:disabled { opacity: 0.5; cursor: default; }
 .canvas-tools button[data-state="saved"] { color: #c3e88d; border-color: #c3e88d; }
+/* Toggle buttons: lit when on, muted when off. */
+.canvas-tools button[data-state="on"] { color: #82aaff; border-color: #3a4a6a; }
+.canvas-tools button[data-state="off"] { color: var(--muted); opacity: 0.6; }
+.canvas-tools .sep { width: 1px; align-self: stretch; background: var(--border-strong); margin: 0 2px; }
 
 .error-box { color: #ff5370; padding: 40px; text-align: center; }
 

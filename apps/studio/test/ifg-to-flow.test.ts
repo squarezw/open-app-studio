@@ -22,10 +22,11 @@ describe('ifgToFlow', () => {
   it('lays out nodes in BFS layers (back edges ignored for depth)', () => {
     const { nodes } = ifgToFlow(IFG);
     const x = new Map(nodes.map((n) => [n.id, n.position.x]));
+    // default COL_W (screenshots shown) = 320
     expect(x.get('home')).toBe(0);
-    expect(x.get('cart')).toBe(300);
-    expect(x.get('checkout')).toBe(600);
-    expect(x.get('orphan')).toBe(900); // unreachable → one past deepest layer
+    expect(x.get('cart')).toBe(320);
+    expect(x.get('checkout')).toBe(640);
+    expect(x.get('orphan')).toBe(960); // unreachable → one past deepest layer
   });
 
   it('marks back edges and keeps forward edges animated', () => {

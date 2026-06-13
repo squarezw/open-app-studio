@@ -33,10 +33,16 @@ export interface FlowEdge {
   isBack: boolean;
 }
 
-const COL_W = 300;
-const ROW_H = 150;
+export function ifgToFlow(
+  ifg: PartialIfg,
+  opts: { showImages?: boolean } = {},
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const showImages = opts.showImages ?? true;
+  // With screenshots the cards are tall (phone aspect) — space rows out so they
+  // don't overlap. Without screenshots they're compact, so pack them tighter.
+  const COL_W = showImages ? 320 : 240;
+  const ROW_H = showImages ? 380 : 96;
 
-export function ifgToFlow(ifg: PartialIfg): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const depth = layerByBfs(ifg);
   const rows = new Map<number, number>();
 
@@ -52,7 +58,7 @@ export function ifgToFlow(ifg: PartialIfg): { nodes: FlowNode[]; edges: FlowEdge
         title: n.title ?? n.id,
         role: n.role,
         visits: n.visits ?? 0,
-        screenshotUrl: firstHttpScreenshot(n),
+        screenshotUrl: showImages ? firstHttpScreenshot(n) : undefined,
         phase: n.phase,
         section: n.section,
         hasTabbar: n.patterns?.some((p) => p.kind === 'tabbar'),
