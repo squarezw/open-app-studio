@@ -123,15 +123,17 @@ export default function FlowCanvas({
 
   const displayNodes: Node[] = useMemo(
     () =>
-      layout.map((n) => ({
-        ...n,
-        data: { ...n.data, showTaps, highlightEdges: highlight },
-        style: {
-          ...n.style,
-          opacity: dim && !highlightedNodeIds!.has(n.id) ? 0.18 : 1,
-          transition: 'opacity 200ms',
-        },
-      })),
+      layout.map((n) => {
+        const dimmed = dim && !highlightedNodeIds!.has(n.id);
+        return {
+          ...n,
+          // Dimmed (off-path) nodes are inert: dragging over them pans the
+          // canvas instead of moving the node. Only the focused path is draggable.
+          draggable: !dimmed,
+          data: { ...n.data, showTaps, highlightEdges: highlight },
+          style: { ...n.style, opacity: dimmed ? 0.18 : 1, transition: 'opacity 200ms' },
+        };
+      }),
     [layout, dim, highlightedNodeIds, showTaps, highlight],
   );
 
