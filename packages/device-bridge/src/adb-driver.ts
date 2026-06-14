@@ -92,14 +92,19 @@ export class AdbDriver implements DeviceDriver {
     }
   }
 
-  /** Fails fast with actionable messages before exploration starts. */
-  async preflight(appId: string): Promise<void> {
+  /** Ensure a device is online, booting an emulator first if autoBoot is set. */
+  async ensureDevice(): Promise<boolean> {
     let state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
-    if (state !== 'device') {
-      if (this.autoBoot) await this.bootEmulator();
+    if (state !== 'device' && this.autoBoot) {
+      await this.bootEmulator();
       state = (await this.run(['get-state']).catch(() => Buffer.from(''))).toString('utf8').trim();
     }
-    if (state !== 'device') {
+    return state === 'device';
+  }
+
+  /** Fails fast with actionable messages before exploration starts. */
+  async preflight(appId: string): Promise<void> {
+    if (!(await this.ensureDevice())) {
       throw new Error(
         'No Android device/emulator connected (adb get-state). Start one, e.g.: emulator -avd oas-test',
       );

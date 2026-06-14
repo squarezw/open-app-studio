@@ -161,23 +161,42 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
     // No url/package given: fake → the demo shop; a real device → whatever app
     // is currently in the foreground on the emulator.
     if (!appId) {
-      const driver = body.driver ?? 'adb';
-      if (driver === 'fake') {
+      if (body.driver === 'fake') {
         appId = 'com.fakeshop';
-      } else {
+      } else if (body.driver === 'adb' || body.driver === 'appium') {
+        // Boot the emulator if needed (pnpm dev doesn't start it), then read
+        // whatever app is in the foreground.
+        let online = false;
         try {
-          const probe = new AdbDriver({ serial: body.serial });
-          const hint = await probe.routeHint();
-          appId = hint?.split('/')[0];
+          const probe = new AdbDriver({ serial: body.serial, log: (m) => console.log(`[adb] ${m}`) });
+          online = await probe.ensureDevice();
+          if (online) {
+            const hint = await probe.routeHint();
+            appId = hint?.split('/')[0];
+          }
         } catch {
-          /* no device / adb error — handled below */
+          /* adb error — handled below */
+        }
+        if (!online) {
+          return c.json(
+            {
+              error:
+                'no emulator running. It is being started — wait ~1 min, open the app you want to clone, then hit Clone. Or enter a package (e.g. com.iherb), which auto-starts the emulator and launches the app.',
+            },
+            409,
+          );
         }
         if (!appId || /launcher|nexuslauncher/i.test(appId)) {
           return c.json(
-            { error: 'no foreground app detected — open an app on the emulator, or enter a url/package' },
+            {
+              error:
+                'emulator is on the home screen — open the app you want to clone and hit Clone again, or enter its package (e.g. com.iherb) to launch it automatically.',
+            },
             400,
           );
         }
+      } else {
+        return c.json({ error: 'provide `url` or `appId`, or pick a device driver' }, 400);
       }
     }
 
