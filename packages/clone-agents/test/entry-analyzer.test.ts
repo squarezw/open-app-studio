@@ -44,6 +44,18 @@ describe('makeVlmAnalyzers', () => {
     expect(tabs?.[2]!.selector.resourceId).toBe('com.entry:id/nav_cart');
   });
 
+  it('analyzeTheme keeps only valid hex colors and sane radii', async () => {
+    const vlm = makeVlmAnalyzers({
+      apiKey: 'test',
+      baseUrl: 'http://vlm.test',
+      model: 'qwen-vl-max',
+      fetchImpl: fakeVlmFetch('{"colors":{"accent":"#22aa55","bg":"not-a-color"},"radii":{"md":16,"sm":-3}}'),
+    });
+    const theme = await vlm!.analyzeTheme(tmpShot());
+    expect(theme.colors).toEqual({ accent: '#22aa55' }); // bg dropped (invalid hex)
+    expect(theme.radii).toEqual({ md: 16 }); // sm dropped (negative)
+  });
+
   it('parses fenced JSON and reports no tabs when the screen has no bar', async () => {
     const vlm = makeVlmAnalyzers({
       apiKey: 'test',

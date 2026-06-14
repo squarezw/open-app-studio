@@ -38,7 +38,7 @@ export function generateProject(spec: AppSpec, opts: GenerateOptions = {}): Gene
     { path: 'app/index.tsx', content: indexFile(spec) },
     ...spec.screens.map((s) => ({ path: `app/${s.id}.tsx`, content: screenFile(s, customRefs) })),
     { path: 'components/oas.tsx', content: template('oas-components.tsx') },
-    { path: 'theme/tokens.ts', content: template('theme-tokens.ts') },
+    { path: 'theme/tokens.ts', content: themeTokensFile(spec) },
     { path: 'state/app-data.ts', content: appDataFile(spec) },
     { path: 'README.md', content: readme(spec) },
   ];
@@ -72,6 +72,32 @@ export async function writeProject(files: GeneratedFile[], outDir: string): Prom
 
 function template(name: string): string {
   return readFileSync(new URL(`../templates/${name}`, import.meta.url), 'utf8');
+}
+
+/** Default dark theme; the single source for generated theme/tokens.ts. */
+const DEFAULT_THEME = {
+  colors: {
+    bg: '#0e1116', panel: '#171c26', border: '#2a3347', text: '#e6ecf5',
+    muted: '#8b9cbd', accent: '#4f7df9', onAccent: '#ffffff', success: '#3ecf8e', danger: '#ff5370',
+  },
+  spacing: { xs: 4, sm: 8, md: 14, lg: 22, xl: 36 },
+  radii: { sm: 6, md: 10, lg: 16 },
+};
+
+/** theme/tokens.ts — defaults, overlaid with any tokens extracted from the source app. */
+function themeTokensFile(spec: AppSpec): string {
+  const t = spec.app.theme;
+  const colors = { ...DEFAULT_THEME.colors, ...(t?.colors ?? {}) };
+  const spacing = { ...DEFAULT_THEME.spacing, ...(t?.spacing ?? {}) };
+  const radii = { ...DEFAULT_THEME.radii, ...(t?.radii ?? {}) };
+  const note = t?.colors || t?.radii ? 'extracted from the source app' : 'generated';
+  return `/** Theme tokens — ${note} by @oas/codegen. Tune to make the app yours. */
+export const colors = ${JSON.stringify(colors, null, 2)};
+
+export const spacing = ${JSON.stringify(spacing, null, 2)};
+
+export const radii = ${JSON.stringify(radii, null, 2)};
+`;
 }
 
 function readme(spec: AppSpec): string {

@@ -183,6 +183,12 @@ export interface IfgMeta {
     blocked?: number;
     actions?: number;
   };
+  /** Design tokens extracted from screenshots (structure mirrors app-spec ThemeTokens). */
+  theme?: {
+    colors?: Record<string, string>;
+    spacing?: Record<string, number>;
+    radii?: Record<string, number>;
+  };
 }
 
 export interface InteractionFlowGraph {

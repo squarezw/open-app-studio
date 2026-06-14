@@ -35,7 +35,22 @@ export interface VlmAnalyzers {
   analyzeEntry: (screenshotPath: string, tree: UiNode) => Promise<{ analysis: EntryAnalysis; tabs?: TabItem[] }>;
   /** When the text policy is stuck, ask the VLM what to do on this screen. */
   analyzeStuck: (screenshotPath: string, context: string) => Promise<StuckAnalysis>;
+  /** Extract design tokens (colors, corner radius) from a screenshot. */
+  analyzeTheme: (screenshotPath: string) => Promise<ThemeTokens>;
 }
+
+/** Design tokens (structure mirrors app-spec ThemeTokens; colors are hex strings). */
+export interface ThemeTokens {
+  colors?: Record<string, string>;
+  radii?: Record<string, number>;
+  spacing?: Record<string, number>;
+}
+
+const THEME_PROMPT = `Look at this mobile app screenshot and extract its design tokens. Reply with JSON ONLY:
+{"colors":{"bg":"#hex","panel":"#hex","text":"#hex","muted":"#hex","accent":"#hex","onAccent":"#hex","border":"#hex"},"radii":{"md":12}}
+- bg: the dominant page background. panel/surface: cards. text: primary text. muted: secondary text. accent: the brand/primary action color (buttons, highlights). onAccent: text on the accent color. border: hairline/divider color.
+- radii.md: typical card/button corner radius in px (estimate).
+- Use 6-digit hex (#RRGGBB). Estimate from what you see; omit a key only if truly indeterminable.`;
 
 const ENTRY_PROMPT = `You are looking at the FIRST screen of a mobile app. Reply with a JSON object ONLY (no prose), shape:
 {"appType": "...", "hasTabBar": true, "tabs": ["Home","Explore","Cart","Me"], "reasoning": "..."}
@@ -76,6 +91,20 @@ Look at the screenshot and reply with JSON ONLY: {"suggestion": "...", "targetTe
 - suggestion: the single best next action in plain words (e.g. "tap the Skip button top-right", "dismiss the popup").
 - targetText: the visible text of the element to tap, if any.`;
       return parseJson<StuckAnalysis>(await ask(screenshotPath, prompt));
+    },
+    analyzeTheme: async (screenshotPath) => {
+      const raw = parseJson<ThemeTokens>(await ask(screenshotPath, THEME_PROMPT));
+      // Keep only valid hex colors and positive radii — never let a bad value poison codegen.
+      const colors = Object.fromEntries(
+        Object.entries(raw.colors ?? {}).filter(([, v]) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)),
+      );
+      const radii = Object.fromEntries(
+        Object.entries(raw.radii ?? {}).filter(([, v]) => typeof v === 'number' && v >= 0 && v <= 64),
+      );
+      return {
+        ...(Object.keys(colors).length ? { colors } : {}),
+        ...(Object.keys(radii).length ? { radii } : {}),
+      };
     },
   };
 }

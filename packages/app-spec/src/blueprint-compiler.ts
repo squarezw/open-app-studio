@@ -64,7 +64,12 @@ export function compileBlueprint(input: InteractionFlowGraph, opts: BlueprintOpt
 
   return {
     version: '0.1',
-    app: { name: opts.appName ?? `${ifg.meta.appName} Clone`, appId: suggestAppId(ifg.meta.appName) },
+    app: {
+      name: opts.appName ?? `${ifg.meta.appName} Clone`,
+      appId: suggestAppId(ifg.meta.appName),
+      // Design tokens extracted from screenshots, if any (else codegen's default theme).
+      ...(ifg.meta.theme && (ifg.meta.theme.colors || ifg.meta.theme.radii) ? { theme: ifg.meta.theme } : {}),
+    },
     navigation,
     screens,
     ...(models.length > 0 ? { data: { models } } : {}),

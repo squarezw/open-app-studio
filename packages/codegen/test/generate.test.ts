@@ -142,4 +142,19 @@ describe('generateProject', () => {
     const again = generateProject(compileBlueprint(SHOP_IFG, { runId: 'r1' }), { ifg: SHOP_IFG });
     expect(again).toEqual(files);
   });
+
+  it('bakes extracted theme tokens into theme/tokens.ts (over the defaults)', () => {
+    const themedIfg: InteractionFlowGraph = {
+      ...SHOP_IFG,
+      meta: { ...SHOP_IFG.meta, theme: { colors: { accent: '#22aa55', bg: '#101820' }, radii: { md: 20 } } },
+    };
+    const tokens = new Map(generateProject(compileBlueprint(themedIfg, {})).map((f) => [f.path, f.content])).get(
+      'theme/tokens.ts',
+    )!;
+    expect(tokens).toContain('#22aa55'); // extracted accent
+    expect(tokens).toContain('#101820'); // extracted bg
+    expect(tokens).toContain('"md": 20'); // extracted radius
+    expect(tokens).toContain('#3ecf8e'); // default success preserved (not extracted)
+    expect(tokens).toContain('extracted from the source app');
+  });
 });
