@@ -68,8 +68,15 @@ export function ifgToFlow(
     tapsByNode.set(e.from, arr);
   }
 
-  const nodes = ifg.nodes.map((n) => {
-    const d = depth.get(n.id) ?? 0;
+  // Within each column, put tab-bar screens (the section roots: Home, Explore,
+  // Cart, …) first, so the column right of Launch reads as the tab bar top-to-
+  // bottom; ordinary content follows. Stable otherwise (discovery order).
+  const isTab = (n: ScreenNode) => n.patterns?.some((p) => p.kind === 'tabbar') ?? false;
+  const ordered = ifg.nodes
+    .map((n, i) => ({ n, i, d: depth.get(n.id) ?? 0 }))
+    .sort((a, b) => a.d - b.d || (isTab(b.n) ? 1 : 0) - (isTab(a.n) ? 1 : 0) || a.i - b.i);
+
+  const nodes = ordered.map(({ n, d }) => {
     const row = rows.get(d) ?? 0;
     rows.set(d, row + 1);
     return {

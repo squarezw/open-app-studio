@@ -54,6 +54,23 @@ export default function FlowCanvas({
   const [showImages, setShowImages] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [showTaps, setShowTaps] = useState(false);
+  const [query, setQuery] = useState('');
+
+  // Find-a-node: center the view on the first node whose title matches.
+  const search = useCallback(
+    (q: string) => {
+      setQuery(q);
+      const needle = q.trim().toLowerCase();
+      if (!needle) return;
+      const hit = layout.find((n) =>
+        String((n.data as { title?: string }).title ?? n.id)
+          .toLowerCase()
+          .includes(needle),
+      );
+      if (hit) instance.current?.fitView({ nodes: [{ id: hit.id }], duration: 400, padding: 1.2, maxZoom: 1.3 });
+    },
+    [layout],
+  );
 
   // Node ids on the highlighted (selected) flow — its edges' endpoints.
   const highlightedNodeIds = useMemo(() => {
@@ -193,6 +210,14 @@ export default function FlowCanvas({
       style={{ background: 'var(--bg)' }}
     >
       <Panel position="top-right" className="canvas-tools">
+        <input
+          className="node-search"
+          type="search"
+          placeholder="Find node…"
+          value={query}
+          onChange={(e) => search(e.target.value)}
+        />
+        <span className="sep" />
         {runStatus === 'running' || runStatus === 'paused' ? (
           <>
             <span className="run-state" data-state={runStatus}>
