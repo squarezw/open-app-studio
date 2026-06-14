@@ -34,6 +34,8 @@ export interface CloneRunOptions {
   goal?: string;
   /** Vision analyzers (entry-screen analysis); omit to use heuristics only. */
   vlm?: VlmAnalyzers;
+  /** Optional LLM role refinement, applied after the keyword annotator. */
+  annotate?: (ifg: InteractionFlowGraph) => Promise<void>;
 }
 
 export class Orchestrator extends EventEmitter {
@@ -97,7 +99,8 @@ export class Orchestrator extends EventEmitter {
       });
 
       if (this.opts.storeUrl) ifg.meta.storeUrl = this.opts.storeUrl;
-      annotate(ifg);
+      annotate(ifg); // keyword baseline
+      if (this.opts.annotate) await this.opts.annotate(ifg); // LLM semantic refinement
       // Role-based flows + every DFS dead-end path, deduped by edge sequence.
       const combined = [...(ifg.flows ?? []), ...deriveFlows(ifg), ...deriveLeafFlows(ifg)];
       const seen = new Set<string>();

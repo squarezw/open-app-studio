@@ -5,6 +5,7 @@ import { cors } from 'hono/cors';
 import { compileBlueprint } from '@oas/app-spec';
 import {
   fetchStoreMetadata,
+  makeLlmAnnotator,
   makeLlmDecider,
   makeVlmAnalyzers,
   parseStoreUrl,
@@ -12,6 +13,7 @@ import {
   type Decider,
   type VlmAnalyzers,
 } from '@oas/clone-agents';
+import type { InteractionFlowGraph } from '@oas/flow-graph';
 import {
   AdbDriver,
   AppiumDriver,
@@ -52,6 +54,8 @@ export interface AppDeps {
   makeDecider?: (appName?: string) => { decide?: Decider; goal?: string; brain: 'llm' | 'heuristic' };
   /** Injectable for tests; builds the vision analyzers. Defaults to env-configured Qwen-VL, else none. */
   makeVlm?: () => VlmAnalyzers | undefined;
+  /** Injectable for tests; builds the LLM role annotator. Defaults to env-configured LLM, else none. */
+  makeAnnotator?: () => ((ifg: InteractionFlowGraph) => Promise<void>) | undefined;
   /** Where per-run artifacts (screens/, report.md, ifg.json) are written. Enables the screenshot route. */
   runsDir?: string;
 }
@@ -76,6 +80,11 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       const goal = `Map the interaction flows of the app${appName ? ` "${appName}"` : ''}. Prioritise core user journeys: browse/search → product detail → add to cart → cart → checkout (stop before paying), and account sign-up / log-in. Avoid dwelling in utility areas (barcode scanner, share, settings, notifications).`;
       return { brain: 'llm' as const, goal, decide: makeLlmDecider(llm) };
     });
+  // Default LLM annotator (semantic roles); none when OAS_LLM_* isn't set.
+  const defaultAnnotator = (): ((ifg: InteractionFlowGraph) => Promise<void>) | undefined => {
+    const llm = new LlmClient();
+    return llm.configured ? makeLlmAnnotator(llm, { log: (m) => console.log(`[annotate] ${m}`) }) : undefined;
+  };
 
   /** Build the driver + brain from a (re-runnable) spec and start the run. */
   function beginRun(spec: RunSpec): { runId: string; brain: 'llm' | 'heuristic' } {
@@ -105,6 +114,8 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
       goal: brainSetup.goal,
       // Vision entry analysis when OAS_VLM_* is configured (real device runs).
       vlm: deps.makeVlm ? deps.makeVlm() : makeVlmAnalyzers(),
+      // Semantic role refinement when OAS_LLM_* is configured (after keyword pass).
+      annotate: deps.makeAnnotator ? deps.makeAnnotator() : defaultAnnotator(),
     });
     return { runId: record.id, brain: brainSetup.brain };
   }

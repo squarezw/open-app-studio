@@ -15,6 +15,8 @@ export type { Scorecard, ProbeResult, ProbeStatus } from './benchmark.js';
 export { Orchestrator } from './orchestrator.js';
 export type { CloneRunOptions } from './orchestrator.js';
 export { annotate, deriveFlows, deriveLeafFlows } from './annotator.js';
+export { makeLlmAnnotator } from './llm-annotator.js';
+export type { LlmAnnotatorOptions } from './llm-annotator.js';
 export { detectTabBar, tabKey } from './tabbar.js';
 export type { TabItem } from './tabbar.js';
 export { makeVlmAnalyzers } from './entry-analyzer.js';
