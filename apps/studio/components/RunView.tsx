@@ -8,6 +8,7 @@ import {
   fetchLayout,
   GATEWAY_URL,
   gatewayWsUrl,
+  generateFromRegion,
   saveLayout,
   type NodePositions,
   type RunSummary,
@@ -30,6 +31,7 @@ export default function RunView({ id }: { id: string }) {
   const [selectedFlow, setSelectedFlow] = useState<string>();
   const [selectedEdge, setSelectedEdge] = useState<string>();
   const [savedPositions, setSavedPositions] = useState<NodePositions>();
+  const [regionStatus, setRegionStatus] = useState<string>();
   const [error, setError] = useState<string>();
   const nodesRef = useRef(new Map<string, ScreenNode>());
   const edgesRef = useRef(new Map<string, ActionEdge>());
@@ -133,6 +135,18 @@ export default function RunView({ id }: { id: string }) {
       await controlRun(id, action);
     } catch (err) {
       setError(`${action} failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  async function onRegion(nodeId: string, rect: { x: number; y: number; w: number; h: number }) {
+    setRegionStatus('Generating component from the selected region…');
+    try {
+      const { ref } = await generateFromRegion(id, nodeId, rect);
+      setRegionStatus(`✓ Generated ${ref} — find it in the Blueprint editor's Custom palette.`);
+      setTimeout(() => setRegionStatus(undefined), 6000);
+    } catch (err) {
+      setRegionStatus(undefined);
+      setError(`component generation failed: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -254,7 +268,9 @@ export default function RunView({ id }: { id: string }) {
           onResume={() => control('resume')}
           onStop={() => control('stop')}
           onEdgeSelect={selectEdge}
+          onRegion={onRegion}
         />
+        {regionStatus && <div className="region-status">{regionStatus}</div>}
       </div>
     </div>
   );

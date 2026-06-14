@@ -28,6 +28,22 @@ export async function saveLayout(id: string, positions: NodePositions): Promise<
   if (!res.ok) throw new Error(`save layout failed: HTTP ${res.status}`);
 }
 
+/** Generate a component from a region of a screen's screenshot. Returns the new ref. */
+export async function generateFromRegion(
+  runId: string,
+  nodeId: string,
+  rect: { x: number; y: number; w: number; h: number },
+): Promise<{ ref: string; describedAs: string }> {
+  const res = await fetch(`${GATEWAY_URL}/api/runs/${runId}/nodes/${nodeId}/component`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rect }),
+  });
+  const data = (await res.json()) as { manifest?: { ref: string }; describedAs?: string; error?: string };
+  if (!res.ok || !data.manifest) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return { ref: data.manifest.ref, describedAs: data.describedAs ?? '' };
+}
+
 /** Pause / resume / stop an in-flight run. */
 export async function controlRun(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void> {
   const res = await fetch(`${GATEWAY_URL}/api/runs/${id}/${action}`, { method: 'POST' });

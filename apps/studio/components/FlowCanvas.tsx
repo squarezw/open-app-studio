@@ -30,11 +30,14 @@ export default function FlowCanvas({
   onResume,
   onStop,
   onEdgeSelect,
+  onRegion,
 }: {
   graph: PartialIfg;
   highlight?: Set<string>;
   /** Clicking an edge selects the path(s) running through it. */
   onEdgeSelect?: (edgeId: string) => void;
+  /** Drag-select a region of a node's screenshot to generate a component. */
+  onRegion?: (nodeId: string, rect: { x: number; y: number; w: number; h: number }) => void;
   /** Persisted node positions to restore (overrides the auto-layout). */
   savedPositions?: NodePositions;
   /** Persist the current arrangement; enables the Save tool when provided. */
@@ -54,6 +57,7 @@ export default function FlowCanvas({
   const [showImages, setShowImages] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
   const [showTaps, setShowTaps] = useState(false);
+  const [regionMode, setRegionMode] = useState(false);
   const [query, setQuery] = useState('');
 
   // Find-a-node: center the view on the first node whose title matches.
@@ -144,14 +148,21 @@ export default function FlowCanvas({
         const dimmed = dim && !highlightedNodeIds!.has(n.id);
         return {
           ...n,
-          // Dimmed (off-path) nodes are inert: dragging over them pans the
-          // canvas instead of moving the node. Only the focused path is draggable.
-          draggable: !dimmed,
-          data: { ...n.data, showTaps, highlightEdges: highlight },
+          // Dimmed (off-path) nodes are inert; in region mode no node is
+          // draggable so a drag selects a screenshot region instead.
+          draggable: !dimmed && !regionMode,
+          data: {
+            ...n.data,
+            showTaps,
+            highlightEdges: highlight,
+            regionMode,
+            nodeId: n.id,
+            onRegion,
+          },
           style: { ...n.style, opacity: dimmed ? 0.18 : 1, transition: 'opacity 200ms' },
         };
       }),
-    [layout, dim, highlightedNodeIds, showTaps, highlight],
+    [layout, dim, highlightedNodeIds, showTaps, highlight, regionMode, onRegion],
   );
 
   // Re-fit when the node count changes, or when toggling images reflows the
@@ -262,6 +273,16 @@ export default function FlowCanvas({
         >
           <CrosshairIcon />
         </button>
+        {onRegion && (
+          <button
+            title={regionMode ? 'Exit region select' : 'Select a region of a screenshot → generate a component'}
+            onClick={() => setRegionMode((v) => !v)}
+            data-state={regionMode ? 'on' : 'off'}
+            aria-label="Region to component"
+          >
+            <RegionIcon />
+          </button>
+        )}
         <span className="sep" />
         <button title="Tidy up — restore the automatic layout" onClick={realign} aria-label="Tidy up layout">
           <GridIcon />
@@ -325,6 +346,14 @@ function CrosshairIcon() {
       <line x1="12" y1="18" x2="12" y2="22" />
       <line x1="2" y1="12" x2="6" y2="12" />
       <line x1="18" y1="12" x2="22" y2="12" />
+    </svg>
+  );
+}
+
+function RegionIcon() {
+  return (
+    <svg {...ICON} strokeDasharray="4 3">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
     </svg>
   );
 }

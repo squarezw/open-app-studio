@@ -83,7 +83,7 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .kv { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; padding: 2px 0; }
 .kv b { color: var(--text); font-weight: 500; }
 
-.canvas-wrap { flex: 1; }
+.canvas-wrap { flex: 1; position: relative; }
 
 .screen-node {
   background: var(--panel);
@@ -186,6 +186,29 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 
 /* Edges are clickable (select the path[s] through them). */
 .react-flow__edge { cursor: pointer; }
+
+/* Region-select box drawn on a screenshot. */
+.screen-node .sel-box {
+  position: absolute;
+  border: 2px dashed #82aaff;
+  background: rgba(130, 170, 255, 0.18);
+  pointer-events: none;
+}
+/* Toast for region → component generation. */
+.region-status {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+}
 
 .error-box { color: #ff5370; padding: 40px; text-align: center; }
 
