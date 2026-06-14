@@ -385,8 +385,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         const fields = (pass === 0 ? interactables : collectInteractables(await driver.uiTree())).filter(
           (i) => i.editable,
         );
-        // Unfilled = current text isn't a value we've already typed.
-        const fresh = fields.filter((f) => !(f.text && typedValues.has(f.text)));
+        // Unfilled = current text isn't a value we've already typed. Never a tab.
+        const fresh = fields.filter(
+          (f) => !(f.text && typedValues.has(f.text)) && !looksLikeTabSelector(f.selector),
+        );
         if (fresh.length === 0) break;
         for (const f of fresh) {
           graph.markTried(nodeId, f.selector);
@@ -409,7 +411,9 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
 
       // Dropdowns (Country / State): tap to open the picker, wait for it to
       // load (often a network request), pick the first real option, return.
-      const dropdowns = collectInteractables(await driver.uiTree()).filter((i) => i.dropdown);
+      const dropdowns = collectInteractables(await driver.uiTree()).filter(
+        (i) => i.dropdown && !looksLikeTabSelector(i.selector),
+      );
       let pickedCount = 0;
       for (const dd of dropdowns) {
         await driver.dismissKeyboard();
