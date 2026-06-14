@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { imagePart, LlmClient, type ChatMessage } from '@oas/llm';
 import type { UiNode } from '@oas/flow-graph';
-import { detectTabBar, type TabItem } from './tabbar.js';
+import { bottomRowItems, detectTabBar, type TabItem } from './tabbar.js';
 
 /**
  * Vision analysis of an app screen. DeepSeek (text) can't *see* the UI — it
@@ -80,12 +80,19 @@ Look at the screenshot and reply with JSON ONLY: {"suggestion": "...", "targetTe
   };
 }
 
-/** Align VLM tab labels (semantics) onto geometry-detected tab elements (operable selectors). */
+/**
+ * Align VLM tab labels (semantics) onto operable uiTree selectors. The VLM
+ * knows how many tabs there are and their order; we want a selector for EACH
+ * one. Prefer geometry detection when it found at least as many tabs as the
+ * VLM saw; otherwise fall back to the bottom-most clickable row so we don't
+ * drop a tab (e.g. iHerb's Me / myaccount_dest) the strict detector missed.
+ */
 function resolveTabs(tree: UiNode, labels: string[]): TabItem[] | undefined {
   const geom = detectTabBar(tree);
-  if (!geom || geom.length < 2) return undefined; // VLM sees a bar but we can't resolve selectors
-  // VLM labels are more reliable than tree captions; align by left-to-right order.
-  return geom.map((t, i) => ({ ...t, label: labels[i]?.trim() || t.label }));
+  const source = geom && geom.length >= labels.length ? geom : bottomRowItems(tree);
+  if (source.length < 2) return geom && geom.length >= 2 ? geom : undefined;
+  const n = Math.min(labels.length, source.length);
+  return source.slice(0, n).map((t, i) => ({ ...t, label: labels[i]?.trim() || t.label }));
 }
 
 /** Lenient JSON extraction — strips code fences and grabs the first {...} block. */

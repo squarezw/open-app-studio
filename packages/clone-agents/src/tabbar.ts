@@ -140,6 +140,27 @@ function allClickable(root: UiNode): UiNode[] {
   return out;
 }
 
+/**
+ * The bottom-most row of clickable items, left-to-right — looser than
+ * detectTabBar (no span/count gate). Used to resolve a VLM-confirmed tab bar to
+ * operable selectors when geometry detection grabbed only a subset.
+ */
+export function bottomRowItems(root: UiNode): TabItem[] {
+  const screenH = root.bounds?.h ?? 2400;
+  const band = clickableLeaves(root).filter((n) => centerOf(n.bounds!).y > screenH * 0.78);
+  const seen = new Set<string>();
+  return sameRow(band, screenH)
+    .map((n) => ({ n, c: centerOf(n.bounds!) }))
+    .filter(({ c }) => {
+      const k = `${Math.round(c.x)},${Math.round(c.y)}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => a.c.x - b.c.x)
+    .map(({ n, c }) => ({ selector: toSelector(n), center: c, label: labelOf(n) }));
+}
+
 /** Keep the largest group of elements sharing roughly one y (within 6% of height). */
 function sameRow(nodes: UiNode[], screenH: number): UiNode[] {
   if (nodes.length < 2) return nodes;
