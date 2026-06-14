@@ -427,6 +427,40 @@ export function createApp(manager: RunManager, deps: AppDeps = {}): Hono {
     }
   });
 
+  // Generate a component from a region of a screen's screenshot: the VLM
+  // describes the framed UI, then the component generator builds it.
+  app.post('/api/runs/:id/nodes/:nodeId/component', async (c) => {
+    const record = manager.get(c.req.param('id'));
+    if (!record?.ifg) return c.json({ error: 'run not found or has no graph' }, 404);
+    const node = record.ifg.nodes.find((n) => n.id === c.req.param('nodeId'));
+    if (!node) return c.json({ error: 'node not found' }, 404);
+    const shot = node.evidence?.find((e) => e.type === 'screenshot' && !/^https?:/.test(e.ref))?.ref;
+    if (!shot) return c.json({ error: 'this screen has no local screenshot' }, 409);
+    const vlm = deps.makeVlm ? deps.makeVlm() : makeVlmAnalyzers();
+    if (!vlm) return c.json({ error: 'vision model not configured (set OAS_VLM_*)' }, 503);
+    let body: { rect?: { x: number; y: number; w: number; h: number }; hint?: string } = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      /* no body — describe the whole screen */
+    }
+    try {
+      const described = await vlm.describeComponent(shot, body.rect);
+      const prompt = body.hint ? `${described}\n${body.hint}` : described;
+      const result = await generate(prompt);
+      const rec = components.add({
+        manifest: result.component.manifest,
+        tsx: result.component.tsx,
+        prompt,
+        attempts: result.attempts,
+      });
+      return c.json({ ...rec, describedAs: described }, 201);
+    } catch (err) {
+      const status = (err as { status?: number }).status === 503 ? 503 : 422;
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, status);
+    }
+  });
+
   app.get('/api/components', (c) => c.json(components.list()));
 
   app.get('/api/runs/:id/flows/:flowId/replay', (c) => {

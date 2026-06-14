@@ -20,6 +20,6 @@ export type { LlmAnnotatorOptions } from './llm-annotator.js';
 export { detectTabBar, tabKey } from './tabbar.js';
 export type { TabItem } from './tabbar.js';
 export { makeVlmAnalyzers } from './entry-analyzer.js';
-export type { VlmAnalyzers, EntryAnalysis, StuckAnalysis } from './entry-analyzer.js';
+export type { VlmAnalyzers, EntryAnalysis, StuckAnalysis, ThemeTokens, Rect } from './entry-analyzer.js';
 export { parseStoreUrl, fetchStoreMetadata, provisionalIfgFromMetadata } from './acquirer.js';
 export type { StoreRef, StoreMetadata } from './acquirer.js';

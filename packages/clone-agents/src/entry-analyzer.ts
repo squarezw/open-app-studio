@@ -37,6 +37,16 @@ export interface VlmAnalyzers {
   analyzeStuck: (screenshotPath: string, context: string) => Promise<StuckAnalysis>;
   /** Extract design tokens (colors, corner radius) from a screenshot. */
   analyzeTheme: (screenshotPath: string) => Promise<ThemeTokens>;
+  /** Describe the UI component in a screenshot region as a build instruction (for component generation). */
+  describeComponent: (screenshotPath: string, rect?: Rect) => Promise<string>;
+}
+
+/** Normalized region of a screenshot (0,0 = top-left, 1,1 = bottom-right). */
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 /** Design tokens (structure mirrors app-spec ThemeTokens; colors are hex strings). */
@@ -105,6 +115,14 @@ Look at the screenshot and reply with JSON ONLY: {"suggestion": "...", "targetTe
         ...(Object.keys(colors).length ? { colors } : {}),
         ...(Object.keys(radii).length ? { radii } : {}),
       };
+    },
+    describeComponent: async (screenshotPath, rect) => {
+      const region = rect
+        ? `Focus ONLY on the rectangular region at normalized coordinates x=${rect.x.toFixed(2)}, y=${rect.y.toFixed(2)}, width=${rect.w.toFixed(2)}, height=${rect.h.toFixed(2)} (0,0 = top-left; 1,1 = bottom-right).`
+        : 'Focus on the single most prominent content component (ignore the status bar and bottom tab bar).';
+      const prompt = `This is a mobile app screenshot. ${region}
+Describe the UI component there so a developer can rebuild it as a React Native component: its layout, the visible text/labels, colors, shape/corner rounding, and any buttons/images/badges. Reply with a concise build instruction of 2-4 sentences (no code), e.g. "A product card: white rounded container, thumbnail on the left, bold title and price stacked on the right, and an orange 'Add to Cart' button.".`;
+      return (await ask(screenshotPath, prompt)).trim();
     },
   };
 }

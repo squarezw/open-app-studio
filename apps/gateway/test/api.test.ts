@@ -277,6 +277,45 @@ describe('gateway API', () => {
     expect(res503.status).toBe(503);
   });
 
+  it('generates a component from a screen region (VLM describe → component-gen)', async () => {
+    const manifest = { ref: 'custom/promo-card', name: 'PromoCard', description: 'promo', patterns: ['card'], props: [] };
+    const fakeVlm = {
+      analyzeEntry: async () => ({ analysis: { appType: 'other', hasTabBar: false, tabs: [] }, tabs: undefined }),
+      analyzeStuck: async () => ({ suggestion: '' }),
+      analyzeTheme: async () => ({}),
+      describeComponent: async (_shot: string, rect?: unknown) => `A promo card${rect ? ' (region given)' : ''}`,
+    };
+    const { app, manager } = makeApp({
+      makeVlm: () => fakeVlm as never,
+      generate: async (prompt: string) => ({
+        component: { manifest, tsx: `// ${prompt}\nexport function PromoCard() { return null; }` },
+        attempts: 1,
+      }),
+    });
+    const ifg = {
+      version: '0.1',
+      meta: { appName: 'X', platform: 'android-emulator' },
+      nodes: [{ id: 'n1', fingerprint: 'a', title: 'Home', evidence: [{ type: 'screenshot', ref: '/tmp/x/screens/step_0.png' }] }],
+      edges: [],
+      frontier: [],
+    } as never;
+    const rec = manager.addCompleted(ifg);
+
+    const res = await app.request(`/api/runs/${rec.id}/nodes/n1/component`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rect: { x: 0, y: 0, w: 1, h: 0.3 } }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { manifest: { ref: string }; describedAs: string };
+    expect(body.manifest.ref).toBe('custom/promo-card');
+    expect(body.describedAs).toContain('promo card');
+
+    // a node without a screenshot → 409
+    const rec2 = manager.addCompleted({ ...(ifg as object), nodes: [{ id: 'n9', fingerprint: 'b', title: 'X' }] } as never);
+    expect((await app.request(`/api/runs/${rec2.id}/nodes/n9/component`, { method: 'POST', body: '{}' })).status).toBe(409);
+  });
+
   it('reports the exploration brain and honors brain=heuristic', async () => {
     let deciderBuilt = 0;
     const { app } = makeApp({
