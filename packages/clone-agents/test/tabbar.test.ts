@@ -8,7 +8,7 @@ import {
 } from '@oas/device-bridge';
 import type { UiNode } from '@oas/flow-graph';
 import { Orchestrator } from '../src/orchestrator.js';
-import { detectTabBar } from '../src/tabbar.js';
+import { detectTabBar, looksLikeTabSelector } from '../src/tabbar.js';
 
 describe('detectTabBar', () => {
   it('finds the four tabs of a BottomNavigationView', () => {
@@ -59,6 +59,15 @@ describe('detectTabBar', () => {
     const tabs = detectTabBar(bar);
     expect(tabs?.map((t) => t.label)).toEqual(['Home', 'Explore', 'Cart', 'Me']);
     expect(tabs?.map((t) => t.selector.resourceId)).toContain('com.iherb:id/cart_dest');
+  });
+
+  it('recognizes tab-item selectors by resource-id shape (skipped on every screen)', () => {
+    expect(looksLikeTabSelector({ resourceId: 'com.iherb:id/myaccount_dest' })).toBe(true);
+    expect(looksLikeTabSelector({ resourceId: 'com.iherb:id/cart_dest' })).toBe(true);
+    expect(looksLikeTabSelector({ resourceId: 'com.app:id/tab_home' })).toBe(true);
+    // ordinary content must NOT be mistaken for a tab
+    expect(looksLikeTabSelector({ resourceId: 'com.iherb:id/ICLProductCard' })).toBe(false);
+    expect(looksLikeTabSelector({ text: 'Add to Cart' })).toBe(false);
   });
 
   it('does not mistake a single corner button for a tab bar', () => {

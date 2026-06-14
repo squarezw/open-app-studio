@@ -19,6 +19,20 @@ const NAV_CONTAINER_HINT =
 const TAB_ITEM_HINT = /(_dest$|_dest_|^tab_|_tab$|nav_item|navitem|navigation|bottomnav)/i;
 
 /**
+ * Stricter pattern for "this clickable IS a bottom-tab item", used to keep tabs
+ * out of free exploration on EVERY screen — even deep pages where we never
+ * detected the bar. Drops the broad container words (navigation/bottomnav) to
+ * avoid false positives; keeps the item-id shapes (iHerb's *_dest, tab_, …).
+ */
+const TAB_ITEM_ID = /(_dest$|_dest_|^tab_\w|_tab$|nav_item|navitem)/i;
+
+/** True when a selector's resourceId looks like a bottom-tab item. */
+export function looksLikeTabSelector(selector: Selector): boolean {
+  const tail = (selector.resourceId ?? '').toLowerCase().split('/').pop() ?? '';
+  return TAB_ITEM_ID.test(tail);
+}
+
+/**
  * Detect a bottom tab bar on a screen and return its tabs (each is a top-level
  * entry). Two signals, container first then a generic geometric fallback:
  *

@@ -13,7 +13,7 @@ import {
   type UiNode,
 } from '@oas/flow-graph';
 import { scoreCandidate, signatureOf } from './policy.js';
-import { detectTabBar, tabKey, type TabItem } from './tabbar.js';
+import { detectTabBar, looksLikeTabSelector, tabKey, type TabItem } from './tabbar.js';
 import type { VlmAnalyzers } from './entry-analyzer.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -442,9 +442,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       if (!untriedKeys.has(selectorKey(cand.selector))) continue;
       // Tabs are top-level entries driven explicitly (one section at a time),
       // never tapped as ordinary candidates — otherwise free exploration would
-      // hop from one bar to another. Excluded by the accumulated tab-selector
-      // set, so this holds even on a screen where detection missed the bar.
-      if (tabSelKeysSeen.has(selectorKey(cand.selector))) {
+      // hop from one bar to another. Excluded both by the accumulated detected
+      // selectors AND by resource-id shape (*_dest / tab_ / nav_item), so a tab
+      // is skipped on EVERY screen even one where the bar was never detected.
+      if (tabSelKeysSeen.has(selectorKey(cand.selector)) || looksLikeTabSelector(cand.selector)) {
         graph.markTried(nodeId, cand.selector);
         continue;
       }
