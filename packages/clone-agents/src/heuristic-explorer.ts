@@ -162,6 +162,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   let pendingTabTitle: string | undefined;
   // After relaunching to the entry, the tab to tap from the entry screen.
   let pendingTabSwitch: TabItem | undefined;
+  // Per-section step budget: e-commerce home feeds are near-infinite, so a
+  // section never "exhausts" — cap each tab's section so every tab is covered.
+  let stepsInSection = 0;
+  let sectionBudget = Number.POSITIVE_INFINITY;
   const tabsVisited = new Set<string>();
   const preMainNodes: string[] = [];
   // Every tab selector ever detected, and each node's interactable keys — so we
@@ -192,6 +196,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         tabBar = tabs;
         mainReached = true;
         entryHasTabBar = true;
+        sectionBudget = Math.max(10, Math.floor(maxActions / tabs.length));
         for (const t of tabs) tabSelKeysSeen.add(selectorKey(t.selector));
         currentSection = tabs[0]?.label;
         pendingTabTitle = tabs[0]?.label;
@@ -278,21 +283,30 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     launchNodeId ??= nodeId;
     appPackage ??= pkg; // first in-app screen defines the target package
     visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
+    stepsInSection += 1;
 
     // Detect the bottom tab bar. The first screen that has one is the tabbed
     // main UI; from there each tab is a top-level section root (handled below).
     const tabsHere = detectTabBar(tree);
     if (tabsHere) {
-      tabBar = tabsHere;
-      for (const t of tabsHere) tabSelKeysSeen.add(selectorKey(t.selector));
-      if (!mainReached) {
-        // First tabbed screen reached mid-run (e.g. after login) — it's the
-        // first tab's home; name it after that tab and mark the tab visited.
-        mainReached = true;
-        currentSection = tabsHere[0]?.label;
-        if (tabsHere[0]) tabsVisited.add(tabKey(tabsHere[0]));
-        if (tabsHere[0]?.label) graph.setTitle(nodeId, tabsHere[0].label);
-        log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
+      // Lock the canonical tab bar to the FIRST one found (entry probe or here).
+      // Later screens often re-detect a bar from a form's button row ("Apply"),
+      // a filter sheet, etc. — letting that overwrite tabBar pollutes the tab
+      // set with fake tabs and scrambles section assignment. Subsequent screens
+      // only get the tabbar pattern noted; the tab list never changes.
+      if (!tabBar) {
+        tabBar = tabsHere;
+        sectionBudget = Math.max(10, Math.floor(maxActions / tabsHere.length));
+        for (const t of tabsHere) tabSelKeysSeen.add(selectorKey(t.selector));
+        if (!mainReached) {
+          // First tabbed screen reached mid-run (e.g. after login) — it's the
+          // first tab's home; name it after that tab and mark the tab visited.
+          mainReached = true;
+          currentSection = tabsHere[0]?.label;
+          if (tabsHere[0]) tabsVisited.add(tabKey(tabsHere[0]));
+          if (tabsHere[0]?.label) graph.setTitle(nodeId, tabsHere[0].label);
+          log(`[${step}] ${nodeId} reached tabbed main UI — ${tabsHere.length} tabs: ${tabsHere.map((t) => t.label).join(', ')}`);
+        }
       }
       graph.notePattern(nodeId, { kind: 'tabbar' });
     }
@@ -338,6 +352,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       pendingTabSwitch = undefined;
       currentSection = tab.label;
       pendingTabTitle = tab.label;
+      stepsInSection = 0; // fresh budget for the new section
       graph.markTried(nodeId, tab.selector);
       log(`[${step}] entering tab "${tab.label}" from entry ${nodeId}`);
       await driver.tap(tab.center);
@@ -562,7 +577,13 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const screenShowsTabBar =
       tabsHere !== undefined ||
       (nodeKeys ? [...tabSelKeysSeen].filter((k) => nodeKeys!.has(k)).length >= 2 : false);
-    if (mainReached && tabBar && screenShowsTabBar && (decision.act === 'back' || decision.act === 'stop')) {
+    // Switch tabs when this section is exhausted (on a tab-bar screen) OR when
+    // it has used its step budget (forced — relaunches to the entry, so it
+    // works from any screen). The budget guarantees every tab gets covered even
+    // when a section's feed never runs out (e-commerce home).
+    const sectionExhausted = screenShowsTabBar && (decision.act === 'back' || decision.act === 'stop');
+    const budgetHit = entryHasTabBar && stepsInSection >= sectionBudget;
+    if (mainReached && tabBar && (sectionExhausted || budgetHit)) {
       const nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
       if (nextTab) {
         tabsVisited.add(tabKey(nextTab));
