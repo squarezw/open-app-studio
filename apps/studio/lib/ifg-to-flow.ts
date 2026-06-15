@@ -43,11 +43,22 @@ export interface FlowEdge {
   isBack: boolean;
 }
 
+/** Section a node belongs to for grouping: 'Pre-main' for pre-main screens, else its tab section. */
+export function nodeSection(n: { phase?: 'pre-main' | 'main'; section?: string }): string | undefined {
+  return n.phase === 'pre-main' ? 'Pre-main' : n.section;
+}
+
 export function ifgToFlow(
   ifg: PartialIfg,
-  opts: { showImages?: boolean } = {},
+  opts: { showImages?: boolean; sectionFilter?: string } = {},
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const showImages = opts.showImages ?? true;
+  // Restrict to one section's subgraph (its nodes + edges between them) when asked.
+  const keep = opts.sectionFilter
+    ? new Set(ifg.nodes.filter((n) => nodeSection(n) === opts.sectionFilter).map((n) => n.id))
+    : null;
+  const visNodes = keep ? ifg.nodes.filter((n) => keep.has(n.id)) : ifg.nodes;
+  const visEdges = keep ? ifg.edges.filter((e) => keep.has(e.from) && keep.has(e.to)) : ifg.edges;
   // With screenshots the cards are tall (phone aspect) — space rows out so they
   // don't overlap. Without screenshots they're compact, so pack them tighter.
   const COL_W = showImages ? 320 : 240;
@@ -60,7 +71,7 @@ export function ifgToFlow(
   // it led". Back/scroll have no meaningful point.
   const titleById = new Map(ifg.nodes.map((n) => [n.id, n.title ?? n.id]));
   const tapsByNode = new Map<string, TapMarker[]>();
-  for (const e of ifg.edges) {
+  for (const e of visEdges) {
     const p = e.action.point;
     if (!p || e.action.kind === 'back' || e.action.kind === 'scroll') continue;
     const arr = tapsByNode.get(e.from) ?? [];
@@ -72,7 +83,7 @@ export function ifgToFlow(
   // Cart, …) first, so the column right of Launch reads as the tab bar top-to-
   // bottom; ordinary content follows. Stable otherwise (discovery order).
   const isTab = (n: ScreenNode) => n.patterns?.some((p) => p.kind === 'tabbar') ?? false;
-  const ordered = ifg.nodes
+  const ordered = visNodes
     .map((n, i) => ({ n, i, d: depth.get(n.id) ?? 0 }))
     .sort((a, b) => a.d - b.d || (isTab(b.n) ? 1 : 0) - (isTab(a.n) ? 1 : 0) || a.i - b.i);
 
@@ -96,7 +107,7 @@ export function ifgToFlow(
     };
   });
 
-  const edges = ifg.edges.map((e) => {
+  const edges = visEdges.map((e) => {
     const isBack = e.action.kind === 'back';
     return {
       id: e.id,

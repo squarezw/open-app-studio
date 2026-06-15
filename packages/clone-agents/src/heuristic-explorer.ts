@@ -169,8 +169,9 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // (detection just missed it on its frames) is reclassified as main.
   const tabSelKeysSeen = new Set<string>();
   const interactablesByNode = new Map<string, Set<string>>();
-  // Design tokens extracted from the entry screenshot (VLM), set on the IFG.
+  // Design tokens + app category extracted from the entry screenshot (VLM), set on the IFG.
   let entryTheme: InteractionFlowGraph['meta']['theme'];
+  let entryCategory: string | undefined;
 
   // Vision-first entry analysis: a VLM actually *sees* the screen, so it
   // recognizes the tab bar and tab labels reliably where blind geometry/id
@@ -182,6 +183,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       const shot = await driver.screenshot(join(opts.outDir, 'screens', 'entry.png'));
       const tree0 = await driver.uiTree();
       const { analysis, tabs } = await opts.vlm.analyzeEntry(shot, tree0);
+      entryCategory = analysis.appType;
       log(
         `[entry] VLM: ${analysis.appType}, tabbar=${analysis.hasTabBar}` +
           (analysis.tabs?.length ? ` — ${analysis.tabs.join(', ')}` : ''),
@@ -671,6 +673,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
 
   const ifg = graph.toIFG();
   if (entryTheme) ifg.meta.theme = entryTheme;
+  if (entryCategory) ifg.meta.category = entryCategory;
   return ifg;
 }
 

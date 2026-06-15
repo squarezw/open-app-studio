@@ -189,6 +189,8 @@ export interface IfgMeta {
     spacing?: Record<string, number>;
     radii?: Record<string, number>;
   };
+  /** App category from vision analysis (e-commerce, lifestyle, short-video, …). */
+  category?: string;
 }
 
 export interface InteractionFlowGraph {

@@ -80,6 +80,20 @@ table.runs th { color: var(--muted); font-weight: 500; font-size: 12px; }
 }
 .flow-item[data-active="true"] { border-color: #ff5370; }
 .flow-item .steps { color: var(--muted); font-size: 12px; }
+
+/* Section menu above the flows list (Pre-main / Home / Cart / …). */
+.section-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.section-tab {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+  cursor: pointer;
+}
+.section-tab:hover { color: var(--text); }
+.section-tab[data-active="true"] { background: #1e2840; border-color: #82aaff; color: #82aaff; }
 .kv { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; padding: 2px 0; }
 .kv b { color: var(--text); font-weight: 500; }
 

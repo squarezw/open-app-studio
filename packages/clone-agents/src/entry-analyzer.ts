@@ -65,7 +65,7 @@ const THEME_PROMPT = `Look at this mobile app screenshot and extract its design 
 const ENTRY_PROMPT = `You are looking at the FIRST screen of a mobile app. Reply with a JSON object ONLY (no prose), shape:
 {"appType": "...", "hasTabBar": true, "tabs": ["Home","Explore","Cart","Me"], "reasoning": "..."}
 Rules:
-- appType: one of e-commerce, social, media, finance, travel, tool, other.
+- appType: one of e-commerce, lifestyle (local services / O2O), short-video, social, media, news, finance, travel, tool, game, other.
 - hasTabBar: true only if there is a BOTTOM tab bar — a row of 2-5 icon+label items pinned at the very bottom that switches top-level sections.
 - tabs: the bottom-tab labels in LEFT-TO-RIGHT order, exactly as written. [] if no tab bar.`;
 

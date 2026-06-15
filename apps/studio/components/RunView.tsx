@@ -31,6 +31,7 @@ export default function RunView({ id }: { id: string }) {
   const [selectedFlow, setSelectedFlow] = useState<string>();
   const [selectedEdge, setSelectedEdge] = useState<string>();
   const [savedPositions, setSavedPositions] = useState<NodePositions>();
+  const [activeSection, setActiveSection] = useState<string>();
   const [regionStatus, setRegionStatus] = useState<string>();
   const [error, setError] = useState<string>();
   const nodesRef = useRef(new Map<string, ScreenNode>());
@@ -118,6 +119,31 @@ export default function RunView({ id }: { id: string }) {
     return undefined;
   }, [graph.flows, selectedFlow, selectedEdge]);
 
+  // Top-level sections (Pre-main + each tab) for the USER FLOWS menu + canvas filter.
+  const sections = useMemo(() => {
+    const tabs: string[] = [];
+    let pre = false;
+    for (const n of graph.nodes) {
+      const s = n.phase === 'pre-main' ? 'Pre-main' : n.section;
+      if (s === 'Pre-main') pre = true;
+      else if (s && !tabs.includes(s)) tabs.push(s);
+    }
+    return pre ? ['Pre-main', ...tabs] : tabs;
+  }, [graph.nodes]);
+
+  // Keep activeSection valid as the graph grows (default to the first section).
+  useEffect(() => {
+    if (sections.length === 0) setActiveSection(undefined);
+    else if (!activeSection || !sections.includes(activeSection)) setActiveSection(sections[0]);
+  }, [sections, activeSection]);
+
+  const flowSection = (f: Flow): string | undefined => {
+    const last = graph.edges.find((e: ActionEdge) => e.id === f.edgeIds[f.edgeIds.length - 1]);
+    const target = graph.nodes.find((n) => n.id === last?.to);
+    return target ? (target.phase === 'pre-main' ? 'Pre-main' : target.section) : undefined;
+  };
+  const shownFlows = (graph.flows ?? []).filter((f: Flow) => !activeSection || flowSection(f) === activeSection);
+
   // Selecting a flow and clicking an edge are mutually exclusive highlights.
   function selectFlow(id: string | undefined) {
     setSelectedEdge(undefined);
@@ -190,6 +216,12 @@ export default function RunView({ id }: { id: string }) {
             {run?.status ?? '…'}
           </span>
         </div>
+        {graph.meta?.category && (
+          <div className="kv">
+            <span>category</span>
+            <b>{graph.meta.category}</b>
+          </div>
+        )}
         <div className="kv">
           <span>screens</span>
           <b>{graph.nodes.length}</b>
@@ -230,7 +262,24 @@ export default function RunView({ id }: { id: string }) {
         )}
 
         <h2>User flows</h2>
-        {(graph.flows ?? []).map((f: Flow) => (
+        {sections.length > 0 && (
+          <div className="section-tabs">
+            {sections.map((s) => (
+              <button
+                key={s}
+                className="section-tab"
+                data-active={activeSection === s}
+                onClick={() => {
+                  setActiveSection(s);
+                  selectFlow(undefined);
+                }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+        {shownFlows.map((f: Flow) => (
           <button
             key={f.id}
             className="flow-item"
@@ -251,9 +300,9 @@ export default function RunView({ id }: { id: string }) {
             </div>
           </button>
         ))}
-        {(graph.flows ?? []).length === 0 && (
+        {shownFlows.length === 0 && (
           <p style={{ color: 'var(--muted)', fontSize: 12 }}>
-            {run?.status === 'running' ? 'Flows appear when the run finishes.' : 'No flows derived.'}
+            {run?.status === 'running' ? 'Flows appear when the run finishes.' : 'No flows in this section.'}
           </p>
         )}
       </aside>
@@ -261,6 +310,7 @@ export default function RunView({ id }: { id: string }) {
         <FlowCanvas
           graph={graph}
           highlight={highlight}
+          sectionFilter={activeSection}
           savedPositions={savedPositions}
           onSaveLayout={(positions) => saveLayout(id, positions)}
           runStatus={run?.status}

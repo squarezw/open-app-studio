@@ -23,6 +23,7 @@ const nodeTypes = { screen: ScreenNodeCard };
 export default function FlowCanvas({
   graph,
   highlight,
+  sectionFilter,
   savedPositions,
   onSaveLayout,
   runStatus,
@@ -34,6 +35,8 @@ export default function FlowCanvas({
 }: {
   graph: PartialIfg;
   highlight?: Set<string>;
+  /** Show only one section's subgraph (Pre-main / Home / Cart / …). */
+  sectionFilter?: string;
   /** Clicking an edge selects the path(s) running through it. */
   onEdgeSelect?: (edgeId: string) => void;
   /** Drag-select a region of a node's screenshot to generate a component. */
@@ -80,20 +83,20 @@ export default function FlowCanvas({
   const highlightedNodeIds = useMemo(() => {
     if (!highlight || highlight.size === 0) return undefined;
     const ids = new Set<string>();
-    for (const e of ifgToFlow(graph).edges) {
+    for (const e of ifgToFlow(graph, { sectionFilter }).edges) {
       if (highlight.has(e.id)) {
         ids.add(e.source);
         ids.add(e.target);
       }
     }
     return ids;
-  }, [graph, highlight]);
+  }, [graph, highlight, sectionFilter]);
 
   // Fold the graph into the draggable layout: keep a node's dragged position,
   // else its saved position, else the auto-layout slot (which depends on
   // whether screenshots are shown — taller cards need more row spacing).
   useEffect(() => {
-    const auto = ifgToFlow(graph, { showImages }).nodes as unknown as Node[];
+    const auto = ifgToFlow(graph, { showImages, sectionFilter }).nodes as unknown as Node[];
     setLayout((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]));
       return auto.map((n) => {
@@ -103,7 +106,7 @@ export default function FlowCanvas({
         return { ...n, position };
       });
     });
-  }, [graph, savedPositions, showImages, setLayout]);
+  }, [graph, savedPositions, showImages, sectionFilter, setLayout]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -119,7 +122,7 @@ export default function FlowCanvas({
 
   const edges: Edge[] = useMemo(
     () =>
-      ifgToFlow(graph).edges.map((e) => {
+      ifgToFlow(graph, { sectionFilter }).edges.map((e) => {
         const on = highlight?.has(e.id) ?? false;
         return {
           id: e.id,
@@ -139,7 +142,7 @@ export default function FlowCanvas({
           labelBgStyle: { fill: '#0b0e14', fillOpacity: 0.85 },
         };
       }),
-    [graph, highlight, dim, showLabels],
+    [graph, highlight, dim, showLabels, sectionFilter],
   );
 
   const displayNodes: Node[] = useMemo(
@@ -171,7 +174,7 @@ export default function FlowCanvas({
     if (instance.current && layout.length > 0) {
       instance.current.fitView({ padding: 0.2, duration: 200 });
     }
-  }, [layout.length, showImages]);
+  }, [layout.length, showImages, sectionFilter]);
 
   // Selecting a flow on the left pans/zooms the canvas to that flow's nodes.
   useEffect(() => {
@@ -185,9 +188,9 @@ export default function FlowCanvas({
 
   const realign = useCallback(() => {
     draggedRef.current.clear();
-    setLayout(ifgToFlow(graph, { showImages }).nodes as unknown as Node[]);
+    setLayout(ifgToFlow(graph, { showImages, sectionFilter }).nodes as unknown as Node[]);
     setTimeout(() => instance.current?.fitView({ padding: 0.2, duration: 300 }), 0);
-  }, [graph, showImages, setLayout]);
+  }, [graph, showImages, sectionFilter, setLayout]);
 
   const save = useCallback(async () => {
     if (!onSaveLayout) return;
