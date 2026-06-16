@@ -22,6 +22,14 @@ export interface Observation {
   capturedAt?: string;
   /** Best-effort human label captured at observation time (e.g. top text element). */
   titleHint?: string;
+  /**
+   * Scopes screen identity to a context (e.g. the current tab/section). Two
+   * structurally-identical screens reached under different hints become distinct
+   * nodes. Used for tab-driven exploration so an app whose tabs look alike
+   * (iHerb Home ≈ Explore) gives each tab its own self-contained subtree instead
+   * of collapsing them into one. Omitted → pure structural dedup (the default).
+   */
+  identityHint?: string;
 }
 
 /** Emitted as the graph grows — the live-streaming contract for Studio/gateway. */
@@ -76,11 +84,14 @@ export class GraphBuilder {
   /** Registers a screen state; returns its (possibly pre-existing) node id. */
   observe(obs: Observation): string {
     const fp = fingerprint(obs.tree);
-    let node = this.nodesByFingerprint.get(fp);
+    // Dedup key may be scoped by an identity hint (e.g. the active tab); the
+    // stored `fingerprint` stays the pure structural hash for display/debugging.
+    const key = obs.identityHint ? `${fp}#${obs.identityHint}` : fp;
+    let node = this.nodesByFingerprint.get(key);
     const isNew = !node;
     if (!node) {
       node = { id: `n_${++this.nodeSeq}`, fingerprint: fp, visits: 0, evidence: [] };
-      this.nodesByFingerprint.set(fp, node);
+      this.nodesByFingerprint.set(key, node);
     }
     node.visits = (node.visits ?? 0) + 1;
     if (obs.routeHint && !node.routeHint) node.routeHint = obs.routeHint;

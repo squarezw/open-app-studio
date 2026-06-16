@@ -273,6 +273,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       log(`[${step}] left app (foreground ${pkg}) — relaunching ${opts.appId}`);
       await driver.launch(opts.appId);
       pending = undefined; // drop the edge that led out of the app
+      if (entryHasTabBar) currentSection = tabBar?.[0]?.label ?? currentSection; // relaunch lands on the entry tab
       await settleToMain();
       continue;
     }
@@ -296,6 +297,11 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       screenshotRef,
       capturedAt: new Date().toISOString(),
       titleHint: guessTitle(tree),
+      // Tab-driven: scope identity to the active tab so structurally-identical
+      // tabs (iHerb Home ≈ Explore) don't collapse and each tab gets its own
+      // self-contained subtree. Only while entered from the entry (entryHasTabBar);
+      // pre-main and tab-less apps keep pure structural dedup.
+      identityHint: entryHasTabBar && mainReached ? currentSection : undefined,
     });
     launchNodeId ??= nodeId;
     appPackage ??= pkg; // first in-app screen defines the target package
@@ -617,6 +623,9 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
           log(`[${step}] section "${currentSection ?? ''}" done — relaunch & enter "${nextTab.label}" from the app entry`);
           pendingTabSwitch = nextTab;
           pending = undefined;
+          // We relaunch to the entry (= the first tab's home), so the screen we
+          // re-observe next belongs to that tab — retag the cursor before observing.
+          currentSection = tabBar[0]?.label ?? currentSection;
           await driver.launch(opts.appId);
           await settleToMain(); // land on the real entry, not a splash, before tapping the tab
           continue;
