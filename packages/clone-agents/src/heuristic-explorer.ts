@@ -6,6 +6,7 @@ import {
   GraphBuilder,
   selectorKey,
   type Action,
+  type ActionEdge,
   type GraphEvent,
   type InteractionFlowGraph,
   type Platform,
@@ -166,6 +167,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // section never "exhausts" — cap each tab's section so every tab is covered.
   let stepsInSection = 0;
   let sectionBudget = Number.POSITIVE_INFINITY;
+  // Section label → its root node id (the tab's landing screen). Sections are
+  // derived from graph STRUCTURE after the walk (each root's reachable subtree),
+  // not from a drifting cursor — far more stable on real apps.
+  const sectionRoots = new Map<string, string>();
   const tabsVisited = new Set<string>();
   const preMainNodes: string[] = [];
   // Every tab selector ever detected, and each node's interactable keys — so we
@@ -312,7 +317,10 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     }
     if (mainReached) {
       graph.markPhase(nodeId, 'main');
-      if (currentSection) graph.markSection(nodeId, currentSection);
+      // Record the first screen of each section as its root (for structural
+      // section derivation after the walk). The cursor only picks roots; it
+      // never stamps individual nodes (that drifts).
+      if (currentSection && !sectionRoots.has(currentSection)) sectionRoots.set(currentSection, nodeId);
     } else {
       // Provisional: only committed as pre-main if a tab bar is ever reached.
       // Apps with no tab bar are free-explored and carry no phase at all.
@@ -695,7 +703,44 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   const ifg = graph.toIFG();
   if (entryTheme) ifg.meta.theme = entryTheme;
   if (entryCategory) ifg.meta.category = entryCategory;
+  if (sectionRoots.size > 0) assignSectionsByStructure(ifg, sectionRoots);
   return ifg;
+}
+
+/**
+ * Derive each main-phase node's `section` from graph STRUCTURE: starting at
+ * each tab's root screen, BFS forward (non-back) to claim its subtree, stopping
+ * at other tab roots and at tab-switch edges. Earlier roots win shared nodes
+ * (Home first). Stable + reproducible — independent of the exploration cursor.
+ */
+export function assignSectionsByStructure(ifg: InteractionFlowGraph, sectionRoots: Map<string, string>): void {
+  for (const n of ifg.nodes) if (n.phase !== 'pre-main') n.section = undefined;
+  const rootIds = new Set(sectionRoots.values());
+  const fwd = new Map<string, ActionEdge[]>();
+  for (const e of ifg.edges) {
+    if (e.action.kind === 'back') continue;
+    const arr = fwd.get(e.from);
+    if (arr) arr.push(e);
+    else fwd.set(e.from, [e]);
+  }
+  const byId = new Map(ifg.nodes.map((n) => [n.id, n]));
+  const assigned = new Set<string>();
+  for (const [label, rootId] of sectionRoots) {
+    const queue = [rootId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (assigned.has(id)) continue;
+      assigned.add(id);
+      const node = byId.get(id);
+      if (node && node.phase !== 'pre-main') node.section = label;
+      for (const e of fwd.get(id) ?? []) {
+        if (assigned.has(e.to)) continue;
+        if (rootIds.has(e.to) && e.to !== rootId) continue; // stop at other tab roots
+        if (e.action.selector && looksLikeTabSelector(e.action.selector)) continue; // don't cross tab edges
+        queue.push(e.to);
+      }
+    }
+  }
 }
 
 /** Clickable (or editable), enabled, visibly-sized elements, top-to-bottom. */
