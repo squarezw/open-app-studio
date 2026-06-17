@@ -135,16 +135,43 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // Wait past a launch/splash screen until the main UI (a tab bar) is showing —
   // so entry analysis and post-relaunch observes land on the real first screen,
   // not a transient splash. Bounded; falls through for apps with no tab bar.
-  const settleToMain = async (): Promise<void> => {
-    for (let s = 0; s < 6; s++) {
+  const settleToMain = async (requireTabBar = false): Promise<void> => {
+    // requireTabBar: wait specifically for the bottom tab bar to render. iHerb's
+    // cold start shows a splash, then a SKELETON (search box + gray placeholders,
+    // no tab bar) for several seconds — tapping a tab before the real bar exists
+    // is absorbed. The skeleton has a few clickables, so the generic "content"
+    // check is not enough; we must see the actual tab bar. Be patient (~24s).
+    const maxIters = requireTabBar ? 60 : 6;
+    for (let s = 0; s < maxIters; s++) {
       await driver.waitForIdle();
       const tree = await driver.uiTree();
-      // Done once the real UI is up: a tab bar, or simply a content-rich screen
-      // (a splash typically shows just a logo). This returns immediately on apps
-      // with no splash (incl. the in-memory fakes) and only waits out a real one.
-      if (detectTabBar(tree) || collectInteractables(tree).length >= 3) return;
+      if (detectTabBar(tree)) return; // real tab bar up → safe to tap tabs
+      // Generic case (initial probe / tab-less apps): a content-rich screen is
+      // enough — a splash typically shows just a logo. Returns immediately on
+      // apps with no splash (incl. the in-memory fakes).
+      if (!requireTabBar && collectInteractables(tree).length >= 3) return;
       await sleep(400);
     }
+  };
+
+  // Tap a tab and RETRY until the screen actually changes. After a cold start a
+  // hybrid app (iHerb) renders the bottom bar before its tap handlers wire up,
+  // so the first tap is often absorbed (no navigation) — passively waiting can't
+  // fix that, we have to tap again. Returns once the fingerprint differs from
+  // `fromFp` (the tab page rendered) or after exhausting attempts.
+  const tapUntilScreenChanges = async (point: { x: number; y: number }, fromFp: string): Promise<boolean> => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await driver.tap(point);
+      for (let w = 0; w < 5; w++) {
+        await driver.waitForIdle();
+        const fp = fingerprint(await driver.uiTree());
+        // Arrived only on a genuinely new screen that isn't a Home variant —
+        // guards against the Home feed re-rendering while the tap was absorbed.
+        if (fp !== fromFp && !homeFps.has(fp)) return true;
+        await sleep(400);
+      }
+    }
+    return false;
   };
 
   await driver.launch(opts.appId);
@@ -183,6 +210,12 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // section never "exhausts" — cap each tab's section so every tab is covered.
   let stepsInSection = 0;
   let sectionBudget = Number.POSITIVE_INFINITY;
+  // Fingerprints seen while on the first tab (Home). iHerb's home feed re-renders
+  // with a slightly different structure between visits, so a tab tap that gets
+  // absorbed (bar present but not yet interactive) still "changes" the fingerprint
+  // — fooling change-detection. We only accept a tab tap as navigated when it
+  // lands on a screen that is NOT any known Home variant.
+  const homeFps = new Set<string>();
   const tabsVisited = new Set<string>();
   const preMainNodes: string[] = [];
   // Every tab selector ever detected, and each node's interactable keys — so we
@@ -200,7 +233,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
   // when no VLM is configured or it can't resolve operable selectors.
   if (opts.vlm && opts.outDir) {
     try {
-      await settleToMain();
+      await settleToMain(true); // wait for the real tab bar (past iHerb's splash+skeleton)
       const shot = await driver.screenshot(join(opts.outDir, 'screens', 'entry.png'));
       const tree0 = await driver.uiTree();
       const { analysis, tabs } = await opts.vlm.analyzeEntry(shot, tree0);
@@ -313,6 +346,9 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     appPackage ??= pkg; // first in-app screen defines the target package
     visitCount.set(nodeId, (visitCount.get(nodeId) ?? 0) + 1);
     stepsInSection += 1;
+    // Remember every Home-tab screen's fingerprint so tab-switch navigation can
+    // tell "arrived at a new tab" from "Home feed merely re-rendered".
+    if (entryHasTabBar && tabBar && currentSection === tabBar[0]?.label) homeFps.add(fingerprint(tree));
 
     // Detect the bottom tab bar. The first screen that has one is the tabbed
     // main UI; from there each tab is a top-level section root (handled below).
@@ -389,14 +425,16 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       stepsInSection = 0; // fresh budget for the new section
       graph.markTried(nodeId, tab.selector);
       log(`[${step}] entering tab "${tab.label}" from entry ${nodeId}`);
-      await driver.tap(tab.center);
       pending = {
         fromId: nodeId,
         action: { kind: 'tap', selector: tab.selector, point: tab.center },
         signature: signatureOf(tab.selector),
       };
       history.push(`${guessTitle(tree) ?? nodeId} → tab ${tab.label}`);
-      await driver.waitForIdle();
+      // Tap-and-retry: ensures the tab actually navigates (first tap after a cold
+      // start is often absorbed) so the tab root we observe is the real page.
+      const switched = await tapUntilScreenChanges(tab.center, fingerprint(tree));
+      if (!switched) log(`[${step}] tab "${tab.label}" did not navigate after retries — staying put`);
       continue;
     }
 
@@ -633,7 +671,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
           // re-observe next belongs to that tab — retag the cursor before observing.
           currentSection = tabBar[0]?.label ?? currentSection;
           await driver.launch(opts.appId);
-          await settleToMain(); // land on the real entry, not a splash, before tapping the tab
+          await settleToMain(true); // wait for the real tab bar (past splash+skeleton) before tapping
           continue;
         }
         // Pre-main-gated app: relaunch wouldn't land on the tabs, so switch from
