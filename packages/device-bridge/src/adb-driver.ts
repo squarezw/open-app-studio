@@ -183,13 +183,20 @@ export class AdbDriver implements DeviceDriver {
       ?.trim();
 
     if (resolved?.includes('/')) {
+      // `-S` force-stops the app before starting, so an already-running app is
+      // cold-started back to its entry screen rather than just brought to the
+      // foreground at whatever deep screen it was on. Essential for tab-driven
+      // exploration: each tab must be entered from a fresh Home, not from the
+      // page the previous section happened to end on.
       await this.run([
-        'shell', 'am', 'start',
+        'shell', 'am', 'start', '-S',
         '-a', 'android.intent.action.MAIN',
         '-c', 'android.intent.category.LAUNCHER',
         '-n', resolved,
       ]);
     } else {
+      // No resolvable launcher activity — force-stop then launch via monkey.
+      await this.run(['shell', 'am', 'force-stop', appId]).catch(() => undefined);
       await this.run(['shell', 'monkey', '-p', appId, '-c', 'android.intent.category.LAUNCHER', '1']);
     }
     await this.waitForIdle(this.settleMs * 2);
