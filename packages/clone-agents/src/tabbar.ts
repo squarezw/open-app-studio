@@ -48,17 +48,19 @@ export function detectTabBar(root: UiNode): TabItem[] | undefined {
   const screenH = root.bounds?.h ?? 2400;
   const screenW = root.bounds?.w ?? 1080;
 
-  const container = findNavContainer(root);
-  let items = container ? clickableLeaves(container) : [];
+  // 1. STRONGEST signal first: clickables whose id looks like a tab destination
+  //    (iHerb *_dest, nav_/tab_/navigation) sitting in the bottom band. A telltale
+  //    tab-item id at the bottom beats a container name or geometry — a TOP app
+  //    bar can carry a misleading id (iHerb's `app_bar_main_bottom_nav` is at the
+  //    top yet contains "bottom_nav"), so the container name alone is not trusted.
+  let items = allClickable(root).filter(
+    (n) => TAB_ITEM_HINT.test((n.resourceId ?? '').toLowerCase()) && centerOf(n.bounds!).y > screenH * 0.6,
+  );
 
+  // 2. A nav container that actually sits in the bottom half → its leaf items.
   if (items.length < 2) {
-    // By resource-id: bottom-half clickables whose id looks like a tab
-    // destination. iHerb names them *_dest (cart_dest, explore_dest, …); many
-    // apps use nav_/tab_/navigation. Catches bars the geometry pass misses.
-    const byId = allClickable(root).filter(
-      (n) => TAB_ITEM_HINT.test((n.resourceId ?? '').toLowerCase()) && centerOf(n.bounds!).y > screenH * 0.6,
-    );
-    if (byId.length >= 2) items = byId;
+    const container = findNavContainer(root, screenH);
+    items = container ? clickableLeaves(container) : [];
   }
 
   if (items.length < 2) {
@@ -100,12 +102,17 @@ export function tabKey(tab: TabItem): string {
   return s.resourceId ?? s.accessibilityId ?? s.text ?? `${Math.round(tab.center.x)}:${Math.round(tab.center.y)}`;
 }
 
-function findNavContainer(root: UiNode): UiNode | undefined {
+function findNavContainer(root: UiNode, screenH: number): UiNode | undefined {
   let found: UiNode | undefined;
   const walk = (n: UiNode): void => {
     if (found) return;
     const id = `${n.resourceId ?? ''} ${n.className}`;
-    if (NAV_CONTAINER_HINT.test(id) && clickableLeaves(n).length >= 2) found = n;
+    if (NAV_CONTAINER_HINT.test(id)) {
+      const leaves = clickableLeaves(n);
+      // Must be a real BOTTOM bar: ≥2 leaves, all in the bottom band. Rejects a
+      // TOP app bar whose id merely contains a nav word (iHerb's app_bar_main_bottom_nav).
+      if (leaves.length >= 2 && leaves.every((l) => centerOf(l.bounds!).y > screenH * 0.6)) found = n;
+    }
     n.children.forEach(walk);
   };
   walk(root);

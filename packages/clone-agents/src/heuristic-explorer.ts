@@ -245,6 +245,12 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       tabBar = probed;
       mainReached = true;
       entryHasTabBar = true; // launch screen is the tabbed root
+      // Per-section step budget — MUST be set here too (not only in the VLM
+      // path): the VLM is non-deterministic and sometimes reports tabbar=false,
+      // in which case this geometric probe is the only place tabs are found. If
+      // we skip it, sectionBudget stays Infinity and Home never yields → only
+      // Home is ever explored.
+      sectionBudget = Math.max(10, Math.floor(maxActions / probed.length));
       for (const t of probed) tabSelKeysSeen.add(selectorKey(t.selector));
       currentSection = probed[0]?.label; // launch lands on the first tab's home
       pendingTabTitle = probed[0]?.label;
