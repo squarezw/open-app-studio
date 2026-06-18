@@ -246,7 +246,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         tabBar = tabs;
         mainReached = true;
         entryHasTabBar = true;
-        sectionBudget = Math.max(10, Math.floor(maxActions / tabs.length));
+        sectionBudget = Math.max(6, Math.floor(maxActions / (tabs.length * 2)));
         for (const t of tabs) tabSelKeysSeen.add(selectorKey(t.selector));
         currentSection = tabs[0]?.label;
         pendingTabTitle = tabs[0]?.label;
@@ -283,7 +283,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       // in which case this geometric probe is the only place tabs are found. If
       // we skip it, sectionBudget stays Infinity and Home never yields → only
       // Home is ever explored.
-      sectionBudget = Math.max(10, Math.floor(maxActions / probed.length));
+      sectionBudget = Math.max(6, Math.floor(maxActions / (probed.length * 2)));
       for (const t of probed) tabSelKeysSeen.add(selectorKey(t.selector));
       currentSection = probed[0]?.label; // launch lands on the first tab's home
       pendingTabTitle = probed[0]?.label;
@@ -361,7 +361,7 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
       // only get the tabbar pattern noted; the tab list never changes.
       if (!tabBar) {
         tabBar = tabsHere;
-        sectionBudget = Math.max(10, Math.floor(maxActions / tabsHere.length));
+        sectionBudget = Math.max(6, Math.floor(maxActions / (tabsHere.length * 2)));
         for (const t of tabsHere) tabSelKeysSeen.add(selectorKey(t.selector));
         if (!mainReached) {
           // First tabbed screen reached mid-run (e.g. after login) — it's the
@@ -656,7 +656,18 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
     const sectionExhausted = screenShowsTabBar && (decision.act === 'back' || decision.act === 'stop');
     const budgetHit = entryHasTabBar && stepsInSection >= sectionBudget;
     if (mainReached && tabBar && (sectionExhausted || budgetHit)) {
-      const nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
+      let nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
+      if (!nextTab && tabBar.length >= 2) {
+        // Completed a full round over the tabs — reset and round-robin again so
+        // each tab DEEPENS over multiple passes (round 1 just creates all roots
+        // with a small budget; later rounds dig in). Keep Home (the first tab)
+        // marked as the base: we always return to it between tabs, never re-enter
+        // it as a switch target (tapping Home lands on a known Home screen, which
+        // the navigation check treats as "didn't move"). Bounded by maxActions.
+        tabsVisited.clear();
+        if (tabBar[0]) tabsVisited.add(tabKey(tabBar[0]));
+        nextTab = tabBar.find((t) => !tabsVisited.has(tabKey(t)));
+      }
       if (nextTab) {
         tabsVisited.add(tabKey(nextTab));
         consecutiveBacks = 0;
