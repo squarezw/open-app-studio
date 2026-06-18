@@ -661,17 +661,24 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         tabsVisited.add(tabKey(nextTab));
         consecutiveBacks = 0;
         if (entryHasTabBar) {
-          // Enter the tab from the app entry: relaunch to the tabbed root, then
-          // tap the tab from there (next loop) so it's a direct child of the
-          // entry — not of whatever screen this section happened to end on.
-          log(`[${step}] section "${currentSection ?? ''}" done — relaunch & enter "${nextTab.label}" from the app entry`);
+          // Enter the next tab from a clean Home (so each tab is a direct child of
+          // the entry). The screen we re-observe next is Home — retag the cursor.
           pendingTabSwitch = nextTab;
           pending = undefined;
-          // We relaunch to the entry (= the first tab's home), so the screen we
-          // re-observe next belongs to that tab — retag the cursor before observing.
           currentSection = tabBar[0]?.label ?? currentSection;
-          await driver.launch(opts.appId);
-          await settleToMain(true); // wait for the real tab bar (past splash+skeleton) before tapping
+          if (tabsHere) {
+            // Warm path: the bottom bar is on-screen, so tap the Home tab to
+            // return to the entry — far cheaper than relaunching through iHerb's
+            // slow splash, so the action budget actually reaches every tab.
+            log(`[${step}] section "${currentSection ?? ''}" done — return Home & enter "${nextTab.label}"`);
+            await driver.tap(tabBar[0]!.center);
+            await settleToMain(true); // bar already up → returns fast
+          } else {
+            // Deep page with no bar on screen — cold-start to a clean entry.
+            log(`[${step}] section "${currentSection ?? ''}" done — relaunch & enter "${nextTab.label}" from the app entry`);
+            await driver.launch(opts.appId);
+            await settleToMain(true); // wait past splash+skeleton for the real bar
+          }
           continue;
         }
         // Pre-main-gated app: relaunch wouldn't land on the tabs, so switch from

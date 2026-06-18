@@ -133,17 +133,19 @@ describe('tabbar-aware exploration (tabbed demo app)', () => {
     });
     const ifg = await orchestrator.run();
     const launchId = ifg.nodes[0]!.id; // the tabbed home (launch)
-    const byTitle = new Map(ifg.nodes.map((n) => [n.title, n]));
+    // A tab ROOT has both title and section equal to the tab label. (A tab's own
+    // subtree may contain a screen that looks like another tab — e.g. a cart view
+    // reached while exploring Me — so match on section, not title alone.)
+    const tabRoot = (label: string) => ifg.nodes.find((n) => n.title === label && n.section === label);
 
-    // tab landings are named after the tab
-    expect(byTitle.get('Me')).toBeDefined();
-    expect(byTitle.get('Search')).toBeDefined();
-    expect(byTitle.get('Cart')).toBeDefined();
+    expect(tabRoot('Me')).toBeDefined();
+    expect(tabRoot('Search')).toBeDefined();
+    expect(tabRoot('Cart')).toBeDefined();
 
-    // every tab is reached directly from the launch/entry screen, not via a
+    // every tab root is reached directly from the launch/entry screen, not via a
     // sibling tab or a product page (the "To Me went Cart→Me" bug).
     for (const label of ['Search', 'Cart', 'Me']) {
-      const node = byTitle.get(label)!;
+      const node = tabRoot(label)!;
       const into = ifg.edges.filter((e) => e.to === node.id && e.action.kind !== 'back');
       expect(into.length).toBeGreaterThan(0);
       expect(into.every((e) => e.from === launchId)).toBe(true);
