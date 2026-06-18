@@ -554,8 +554,15 @@ export async function explore(driver: DeviceDriver, opts: ExploreOptions): Promi
         graph.markTried(nodeId, cand.selector);
         continue;
       }
+      // Scanner-trap pruning: skip a recurring control whose destination is
+      // already fully explored. Only for elements with a STABLE identity
+      // (resourceId/accessibilityId/text) — an xpath signature is just a
+      // structural position that collides across structurally-similar screens
+      // (iHerb's Home feed item and an Explore tile sit at the same path), so
+      // pruning by it would wrongly kill a different screen's content.
+      const stableId = cand.selector.resourceId ?? cand.selector.accessibilityId ?? cand.selector.text;
       const signature = signatureOf(cand.selector);
-      const dest = destinationOf.get(signature);
+      const dest = stableId ? destinationOf.get(signature) : undefined;
       if (dest && dest !== nodeId && !graph.hasUntried(dest)) {
         graph.markTried(nodeId, cand.selector);
         continue;
